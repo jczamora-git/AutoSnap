@@ -87,6 +87,10 @@ jobs:
       - name: Build Inno Setup Installer
         shell: powershell
         run: |
+          if (-not (Test-Path "installer\AutoSnap.iss")) {
+              Write-Host "installer\AutoSnap.iss not found in checked out tag; retrieving from origin/main..."
+              git checkout origin/main -- installer
+          }
           $portableDir = (Resolve-Path ".\artifacts\AutoSnap-v$env:APP_VERSION-portable").Path
           $artifactsDir = (Resolve-Path ".\artifacts").Path
           $outputBase = "AutoSnap-Setup-v$env:APP_VERSION"
