@@ -30,4 +30,7 @@ public class BrowserCaptureMessage
 
     [JsonPropertyName("message")]
     public string? Message { get; set; }
+
+    [JsonPropertyName("hasAudio")]
+    public bool? HasAudio { get; set; }
 }

@@ -1,31 +1,32 @@
-# AutoSnap v1.0.0
+# AutoSnap v1.2.0 Release Notes
 
-Initial public release of AutoSnap.
+AutoSnap v1.2.0 is a major upgrade that expands AutoSnap from automatic screenshot capture into high-performance local video processing and offline AI speech transcription.
 
-## Highlights
+## Key Highlights
 
-- **Desktop Window & Monitor Capture**: Select any running desktop application or active monitor for high-fidelity periodic captures.
-- **Native Browser Tab Capture**: Seamlessly capture any tab in Google Chrome or compatible Chromium browsers without separate profiles or debugging flags.
-- **Interval Scheduling**: Automatic screenshot timer with custom durations, countdown timer, and snapshot counter.
-- **Immediate Manual Snapshot**: On-demand capture without interrupting or resetting the running schedule.
-- **Live Preview with Backpressure**: Responsive preview panel with smart throttling to prevent redundant captures.
-- **Storage Management**: Configurable save location, auto-cleanup thresholds, and customizable JPEG/PNG format and quality controls.
-- **Tray & Background Execution**: Runs unobtrusively in the Windows system tray with balloon notifications and tray menu commands.
+### 🎞 Local Video Processing
+- Fast, non-real-time interval frame extraction for local video files (`.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`, `.m4v`).
+- Automated metadata extraction (duration, resolution, framerate, video/audio codecs) via FFprobe.
+- Batch frame extraction with clean timestamp naming (`00-00-00.jpg`, `00-05-00.jpg`).
 
-## Browser Capture
+### 🎙 Local Whisper Transcription
+- Fully offline AI speech-to-text powered by Whisper (`Whisper.net` with native runtime).
+- **System Audio Transcription**: Transcribe live desktop audio (meetings, Zoom, Teams, YouTube) via WASAPI loopback without capturing background room microphone noise.
+- **Browser Tab Audio**: Stream and transcribe browser tab audio directly alongside screenshot capture.
+- **Local Media Transcription**: Transcribe audio and video files directly to subtitle/transcript documents.
+- **Taglish & Multilingual Support**: First-class support for Taglish, English, and Filipino without unwanted translation into pure English.
+- **Multi-Format Export**: One-click export to **TXT**, **SRT**, and **VTT**.
+- **Autosave & Recovery**: Protects long-running live transcription sessions with 30-second autosaves.
+- **Built-in Model Manager**: Download official Whisper models (`Tiny`, `Base`, `Small Multilingual`, `Medium`) on demand.
 
-The browser capture subsystem uses a secure, local loopback bridge on `127.0.0.1` and Chrome's native `navigator.mediaDevices.getDisplayMedia()` API:
-- Works with your existing Chrome profile and logged-in sessions (e.g. Google Meet, YouTube, Gmail).
-- Captures the tab content itself rather than the entire browser window or visible screen.
-- Respects browser security and user consent.
+## Distribution Assets
+- `AutoSnap-Setup-v1.2.0.exe` (Windows Installer)
+- `AutoSnap-v1.2.0-portable.zip` (Self-Contained Portable Archive)
+- `AutoSnap-v1.2.0-portable.zip.sha256` (SHA256 Checksum)
 
-## Notes
-
-- **OS**: Windows 10 / Windows 11 (x64)
-- **Deployment**: Standalone self-contained Windows x64 build (no .NET runtime installation required)
+## Notes & Requirements
+- **OS**: Windows 10 / Windows 11 (64-bit)
+- **Deployment**: Standalone self-contained Windows x64 build (no .NET runtime installation required).
+- **FFmpeg**: Required for video frame extraction and local file audio extraction (detected from PATH, Chocolatey, Scoop, or Settings).
+- **Whisper Models**: Downloaded on demand through the Model Manager and saved in `%LocalAppData%\AutoSnap\Models\Whisper\`.
 - **Code Signing**: Application binary is currently unsigned; SmartScreen prompt may appear upon first launch.
-
-## Known Limitations
-
-- **Local Video Mode**: Frame extraction from local video files is slated for a future release (Phase 2) and is marked as disabled in v1.0.0.
-- **Browser MediaStream Background Throttling**: Chromium browsers may throttle MediaStream frame delivery if the browser window is fully minimized by the operating system.
