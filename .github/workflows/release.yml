@@ -1,0 +1,131 @@
+name: Release AutoSnap
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and publish assets for (e.g. v1.0.0)"
+        required: true
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Determine Version
+        shell: powershell
+        run: |
+          $rawTag = "${{ github.event.inputs.tag || github.ref_name }}"
+          if (-not $rawTag.StartsWith("v")) {
+              $tag = "v$rawTag"
+          } else {
+              $tag = $rawTag
+          }
+          $version = $tag.TrimStart('v')
+          Write-Host "Building for Tag: $tag, Version: $version"
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: |
+          choco install innosetup --no-progress
+          $innoPath = "C:\Program Files (x86)\Inno Setup 6"
+          if (Test-Path $innoPath) {
+              echo $innoPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Build Release
+        run: dotnet build -c Release -p:Version=$env:APP_VERSION -p:FileVersion=$env:APP_VERSION.0
+
+      - name: Publish Self-Contained win-x64
+        shell: powershell
+        run: |
+          $portableDir = ".\artifacts\AutoSnap-v$env:APP_VERSION-portable"
+          dotnet publish .\Jeizi_Capture\Jeizi_Capture.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:Version=$env:APP_VERSION `
+            -p:FileVersion=$env:APP_VERSION.0 `
+            -o $portableDir
+
+      - name: Package Portable ZIP and Compute SHA256
+        shell: powershell
+        run: |
+          $portableDir = ".\artifacts\AutoSnap-v$env:APP_VERSION-portable"
+          $zipPath = ".\artifacts\AutoSnap-v$env:APP_VERSION-portable.zip"
+          $shaPath = ".\artifacts\AutoSnap-v$env:APP_VERSION-portable.zip.sha256"
+
+          Compress-Archive -Path "$portableDir\*" -DestinationPath $zipPath -Force
+          $hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash
+          "$hash  AutoSnap-v$env:APP_VERSION-portable.zip" | Set-Content -Path $shaPath -Encoding UTF8
+          Write-Host "Generated SHA256: $hash"
+
+      - name: Build Inno Setup Installer
+        shell: powershell
+        run: |
+          $portableDir = (Resolve-Path ".\artifacts\AutoSnap-v$env:APP_VERSION-portable").Path
+          $artifactsDir = (Resolve-Path ".\artifacts").Path
+          $outputBase = "AutoSnap-Setup-v$env:APP_VERSION"
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+
+          & $iscc `
+            /DAppVersion=$env:APP_VERSION `
+            /DSourceDir="$portableDir" `
+            /DOutputDir="$artifactsDir" `
+            /DOutputBaseFilename="$outputBase" `
+            installer\AutoSnap.iss
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: AutoSnap ${{ env.RELEASE_TAG }}
+          generate_release_notes: true
+          files: |
+            artifacts/AutoSnap-Setup-v${{ env.APP_VERSION }}.exe
+            artifacts/AutoSnap-v${{ env.APP_VERSION }}-portable.zip
+            artifacts/AutoSnap-v${{ env.APP_VERSION }}-portable.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Output Release Summary
+        shell: powershell
+        run: |
+          $summary = @"
+          ## AutoSnap Release Build Summary
+
+          - **Release Tag:** $env:RELEASE_TAG
+          - **Version:** $env:APP_VERSION
+
+          ### Release Distributables
+          | Asset | Description |
+          |---|---|
+          | `AutoSnap-Setup-v$env:APP_VERSION.exe` | Windows Installer |
+          | `AutoSnap-v$env:APP_VERSION-portable.zip` | Self-contained portable archive |
+          | `AutoSnap-v$env:APP_VERSION-portable.zip.sha256` | SHA256 Checksum |
+          "@
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

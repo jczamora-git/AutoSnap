@@ -35,13 +35,16 @@ AutoSnap does not access passwords, cookies, authentication tokens, or browsing 
 - **Browser**: Google Chrome (or compatible Chromium browser) for Browser Tab Capture
 - The self-contained `win-x64` release includes all required .NET components and does not require a separate .NET runtime installation.
 
-## Installation
+## Download & Installation
 
-1. Download `AutoSnap-v1.0.0-win-x64.zip` from the [Releases](https://github.com/jczamora-git/AutoSnap/releases) page.
-2. Extract the ZIP archive to a folder of your choice.
-3. Run `AutoSnap.exe`.
+Download the latest release for Windows from the [GitHub Releases](https://github.com/jczamora-git/AutoSnap/releases) page.
 
-> **Note**: Because v1.0.0 is an unsigned release binary, Windows SmartScreen may display an initial warning. Click **More info** &rarr; **Run anyway** to proceed.
+Available distribution packages:
+- **Windows Installer** (`AutoSnap-Setup-vX.Y.Z.exe`): Standard Windows setup wizard with Start Menu shortcuts, optional Desktop shortcut, and uninstaller.
+- **Portable ZIP** (`AutoSnap-vX.Y.Z-portable.zip`): Standalone archive that can be extracted and run immediately without installation.
+- **SHA256 Checksum** (`AutoSnap-vX.Y.Z-portable.zip.sha256`): SHA256 integrity checksum.
+
+> **Note**: AutoSnap is currently unsigned, so Windows SmartScreen may show a warning on first launch. Click **More info** &rarr; **Run anyway** to proceed.
 
 ## Usage
 

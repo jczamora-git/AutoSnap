@@ -5,6 +5,7 @@
 [Rr]elease/
 publish/
 artifacts/
+[Ii]nstaller/[Oo]utput/
 
 ## Visual Studio
 .vs/
