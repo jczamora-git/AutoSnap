@@ -1,69 +1,99 @@
 # AutoSnap
 
-AutoSnap is a Windows desktop application for automatically capturing screenshots from selected displays, application windows, and supported browser tabs at configurable intervals.
+AutoSnap is an automatic screenshot capture and local speech-to-text transcription application for Windows.
 
 ## Features
 
+### 📸 Screen Capture
 - **Application Window Capture**: Capture any active desktop window accurately.
 - **Display / Monitor Capture**: Capture entire monitors or specific displays in multi-monitor setups.
-- **Chrome / Browser Tab Capture**: Capture individual browser tabs directly from your existing Chrome session using native media sharing.
-- **Configurable Intervals**: Choose preset intervals (1s, 5s, 10s, 30s, 1m, 5m, etc.) or set custom seconds, minutes, and hours.
-- **Manual Snapshot**: Capture instant on-demand screenshots without resetting your timer.
-- **Live Preview**: Real-time visual feedback and preview of the selected source.
-- **Capture Control**: Start, pause, resume, and stop capture sessions anytime.
+- **Chrome / Browser Tab Capture**: Capture individual browser tabs directly from your existing Chrome session using native media sharing (`getDisplayMedia`).
+- **Configurable Intervals**: Choose preset intervals (1s, 5s, 10s, 30s, 1m, 5m, etc.) or custom timings.
+- **Immediate Manual Snapshot**: Capture instant on-demand snapshots without interrupting your timer.
+- **Live Preview with Smart Throttling**: Real-time visual feedback and preview of the selected source.
 - **Image Formatting**: Save as customizable JPEG (with quality control) or lossless PNG.
-- **Configurable Output Directory**: Easily organize and open destination folders directly from the app.
-- **Session Statistics**: Live countdown timer, total snapshot counter, and elapsed session duration.
-- **System Tray Support**: Minimize to system tray with background capture and quick actions.
-- **Local Video**: Planned for a future release (Phase 2).
+- **System Tray Support**: Run in the background with tray notifications and quick controls.
 
-## Browser Tab Capture
+### 🎞 Local Video Processing
+- **Interval-Based Frame Extraction**: Extract frames across full videos (e.g. every 1 minute or 5 minutes) fast and non-real-time.
+- **Wide Format Support**: Works with `.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`, `.m4v` via FFmpeg/FFprobe.
+- **Combined Processing**: Extract snapshots and/or transcribe full video audio in a single job.
+- **Progress Tracking**: Real-time progress bar, snapshot count, and cancellation support.
 
-AutoSnap uses the browser's native `getDisplayMedia()` screen-sharing permission workflow. When you click **Choose Chrome Tab**, AutoSnap opens a lightweight local helper page in your existing Chrome session. When you click **Choose Chrome Tab** in the helper page, Chrome displays its standard tab sharing picker, allowing you to select any existing open tab (such as Google Meet, YouTube, Gmail, Docs, etc.).
+### 🎙 Local Whisper Transcription
+- **100% Offline & Private**: Runs Whisper locally on your machine—no cloud APIs, subscriptions, or telemetry.
+- **Multi-Source Audio**:
+  - **System Audio**: Capture and transcribe Windows desktop audio output (Zoom, Teams, meetings, YouTube, lectures) via WASAPI loopback without capturing microphone noise.
+  - **Browser Tab Audio**: Stream and transcribe tab audio directly alongside browser screenshots.
+  - **Local Media**: Transcribe local video and audio files (`.wav`, `.mp3`, `.m4a`, `.mp4`, etc.).
+- **Multilingual & Taglish Support**:
+  - **Taglish (Recommended)**: Preserves mixed Filipino and English speech without translating.
+  - **English**
+  - **Filipino / Tagalog**
+  - **Auto Detect**
+- **Multi-Format Export**: Export live transcripts to **TXT**, **SRT** (SubRip), and **VTT** (WebVTT).
+- **Live Transcript Editor**: View and edit transcripts before exporting.
+- **Transcript Recovery / Autosave**: Automatically protects long sessions against crashes with autosaves every 30 seconds.
+- **Whisper Model Manager**: Download and manage official local Whisper models (`Tiny`, `Base`, `Small`, `Medium`) on demand.
 
-AutoSnap does not bypass browser capture permissions and does not require:
-- Isolated browser profiles
-- Remote debugging flags (`--remote-debugging-port`)
-- Chrome extensions
-- ChromeDriver or Selenium
-
-AutoSnap does not access passwords, cookies, authentication tokens, or browsing history.
+---
 
 ## Requirements
 
 - **Operating System**: Windows 10 / Windows 11 (64-bit)
-- **Browser**: Google Chrome (or compatible Chromium browser) for Browser Tab Capture
-- The self-contained `win-x64` release includes all required .NET components and does not require a separate .NET runtime installation.
+- **Browser**: Google Chrome (or Chromium-based browser) for Browser Tab capture and audio streaming.
+- **FFmpeg & FFprobe**: Required for local video frame extraction and media file audio conversion. AutoSnap automatically detects FFmpeg on your system PATH, Chocolatey, Scoop, or custom configured paths in Settings.
+- **Whisper Model**: Downloaded on demand via the built-in Model Manager (stored in `%LocalAppData%\AutoSnap\Models\Whisper\`).
+- The self-contained `win-x64` release includes all required .NET desktop runtime components.
+
+---
 
 ## Download & Installation
 
 Download the latest release for Windows from the [GitHub Releases](https://github.com/jczamora-git/AutoSnap/releases) page.
 
 Available distribution packages:
-- **Windows Installer** (`AutoSnap-Setup-vX.Y.Z.exe`): Standard Windows setup wizard with Start Menu shortcuts, optional Desktop shortcut, and uninstaller.
-- **Portable ZIP** (`AutoSnap-vX.Y.Z-portable.zip`): Standalone archive that can be extracted and run immediately without installation.
-- **SHA256 Checksum** (`AutoSnap-vX.Y.Z-portable.zip.sha256`): SHA256 integrity checksum.
+- **Windows Installer** (`AutoSnap-Setup-v1.2.0.exe`): Standard Windows setup wizard with Start Menu shortcuts, optional Desktop shortcut, and uninstaller.
+- **Portable ZIP** (`AutoSnap-v1.2.0-portable.zip`): Standalone archive that can be extracted and run immediately without installation.
+- **SHA256 Checksum** (`AutoSnap-v1.2.0-portable.zip.sha256`): SHA256 integrity checksum.
 
 > **Note**: AutoSnap is currently unsigned, so Windows SmartScreen may show a warning on first launch. Click **More info** &rarr; **Run anyway** to proceed.
 
-## Usage
+---
 
-1. **Choose Capture Source**: Select **Application Window**, **Display / Monitor**, or **Chrome Tab**.
-2. **Select Target**:
-   - For Window/Display: Click **Change...** to pick the specific window or monitor.
-   - For Chrome Tab: Click **Choose Chrome Tab** to open the local helper page, then pick the tab from Chrome's sharing dialog.
-3. **Choose Interval**: Select your desired capture frequency (e.g. 5 seconds, 10 seconds, 1 minute, or custom).
-4. **Select Output Directory**: View or customize the save location in Settings.
-5. **Start Capture**: Click **Start** to begin automatic capture, or click **Take Snapshot Now** for an immediate capture.
-6. Use **Pause**, **Resume**, and **Stop** as needed.
+## Quick Start Guide
+
+### 1. Screen Capture
+1. Select **Capture** from the top navigation.
+2. Choose your capture source: **Application Window**, **Display / Monitor**, or **Chrome Tab**.
+3. Set your desired interval (e.g. 10 seconds or 1 minute).
+4. Click **Start** to begin capturing screenshots.
+
+### 2. Video Processing
+1. Select **Local Video** from the top navigation.
+2. Click **Browse Video File...** and select a video.
+3. Choose whether to **Extract Snapshots** (and interval) and/or **Generate Transcript**.
+4. Click **Process Video**.
+
+### 3. Live Transcription
+1. Select **Transcription** from the top navigation.
+2. Ensure you have downloaded a Whisper model (click **Manage Models...**).
+3. Select your audio source (**System Audio**, **Browser Tab Audio**, or **Local Media File**).
+4. Select your language (e.g. **Taglish** or **English**).
+5. Click **Start Transcription**.
+6. Export as **TXT**, **SRT**, or **VTT** when finished.
+
+---
 
 ## Privacy & Security
 
-- All screenshots are captured and stored strictly on your local machine.
+- All screenshots, video frames, and audio transcriptions are processed and stored strictly on your local machine.
 - Browser tab capture requires explicit user consent via Chrome's native sharing prompt.
 - AutoSnap runs its capture bridge strictly on local loopback (`127.0.0.1`).
-- AutoSnap does not collect telemetry or upload screenshots to external servers.
+- AutoSnap does not send audio or screenshots to external cloud APIs.
+
+---
 
 ## Version
 
-AutoSnap v1.0.0
+AutoSnap v1.2.0
