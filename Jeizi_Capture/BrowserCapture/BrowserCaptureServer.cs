@@ -20,12 +20,15 @@ public class BrowserCaptureServer : IDisposable
     public string Url => $"http://127.0.0.1:{Port}/";
     public bool IsRunning => _listener != null && _listener.IsListening;
     public bool HasActiveStream => _activeSession != null && _activeSession.HasActiveStream;
+    public bool HasAudioTrack => _activeSession != null && _activeSession.HasAudioTrack;
     public BrowserCaptureSession? ActiveSession => _activeSession;
 
     public event EventHandler<BrowserCaptureSession>? SessionConnected;
     public event EventHandler? SessionDisconnected;
     public event EventHandler<(string Title, int Width, int Height)>? StreamStarted;
     public event EventHandler? StreamEnded;
+    public event EventHandler<bool>? AudioTrackStatusChanged;
+    public event EventHandler<byte[]>? AudioDataReceived;
 
     public void Start(int preferredPort = 0)
     {
@@ -97,6 +100,8 @@ public class BrowserCaptureServer : IDisposable
 
                 session.StreamStarted += (s, e) => StreamStarted?.Invoke(this, e);
                 session.StreamEnded += (s, e) => StreamEnded?.Invoke(this, EventArgs.Empty);
+                session.AudioTrackStatusChanged += (s, e) => AudioTrackStatusChanged?.Invoke(this, e);
+                session.AudioDataReceived += (s, e) => AudioDataReceived?.Invoke(this, e);
                 session.Disconnected += (s, e) =>
                 {
                     lock (_lock)

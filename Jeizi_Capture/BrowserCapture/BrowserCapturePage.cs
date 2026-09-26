@@ -274,6 +274,10 @@ public static class BrowserCapturePage
     <script>
         let ws = null;
         let currentStream = null;
+        let audioCtx = null;
+        let audioSourceNode = null;
+        let audioProcessor = null;
+
         const video = document.getElementById('captureVideo');
         const canvas = document.getElementById('captureCanvas');
         const ctx = canvas.getContext('2d');
@@ -339,16 +343,16 @@ public static class BrowserCapturePage
             }
 
             try {
-                // Request tab sharing
+                // Request tab sharing with optional audio
                 const stream = await navigator.mediaDevices.getDisplayMedia({
                     video: {
                         displaySurface: 'browser'
                     },
-                    audio: false
+                    audio: true
                 });
 
                 if (currentStream) {
-                    currentStream.getTracks().forEach(t => t.stop());
+                    cleanupStream();
                 }
 
                 currentStream = stream;
@@ -358,24 +362,85 @@ public static class BrowserCapturePage
                 videoWrapper.style.display = 'block';
 
                 const track = stream.getVideoTracks()[0];
-                const tabTitle = track.label || 'Chrome Tab';
+                const tabTitle = track ? track.label || 'Chrome Tab' : 'Chrome Tab';
+
+                const audioTracks = stream.getAudioTracks();
+                const hasAudio = audioTracks.length > 0;
 
                 statusBox.classList.add('status-active');
                 statusText.textContent = 'Sharing Active';
                 sourceName.textContent = tabTitle;
-                sourceHint.textContent = 'AutoSnap is now capturing snapshots from this tab.';
+                sourceHint.textContent = hasAudio
+                    ? 'AutoSnap is capturing video snapshots and streaming tab audio.'
+                    : 'AutoSnap is capturing video snapshots (tab audio not shared).';
 
                 btnChoose.style.display = 'none';
                 btnChange.style.display = 'inline-flex';
                 btnStop.style.display = 'inline-flex';
 
                 notifyStreamStarted();
+                setupAudioStreaming(stream);
 
-                track.onended = () => {
-                    handleStreamEnded();
-                };
+                if (track) {
+                    track.onended = () => {
+                        handleStreamEnded();
+                    };
+                }
             } catch (err) {
                 console.warn('Capture cancelled or failed:', err);
+            }
+        }
+
+        function setupAudioStreaming(stream) {
+            const audioTracks = stream.getAudioTracks();
+            const hasAudio = audioTracks.length > 0;
+
+            sendWs({
+                type: 'audioTrackStatus',
+                hasAudio: hasAudio
+            });
+
+            if (!hasAudio) return;
+
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                audioSourceNode = audioCtx.createMediaStreamSource(stream);
+                audioProcessor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+                audioProcessor.onaudioprocess = (e) => {
+                    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    const pcmData = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        const s = Math.max(-1, Math.min(1, inputData[i]));
+                        pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+                    ws.send(pcmData.buffer);
+                };
+
+                audioSourceNode.connect(audioProcessor);
+                audioProcessor.connect(audioCtx.destination);
+            } catch (ex) {
+                console.warn('Audio streaming setup failed:', ex);
+            }
+        }
+
+        function cleanupStream() {
+            if (audioProcessor) {
+                try { audioProcessor.disconnect(); } catch {}
+                audioProcessor = null;
+            }
+            if (audioSourceNode) {
+                try { audioSourceNode.disconnect(); } catch {}
+                audioSourceNode = null;
+            }
+            if (audioCtx) {
+                try { audioCtx.close(); } catch {}
+                audioCtx = null;
+            }
+            if (currentStream) {
+                currentStream.getTracks().forEach(t => t.stop());
+                currentStream = null;
             }
         }
 
@@ -393,14 +458,12 @@ public static class BrowserCapturePage
         }
 
         function stopCapture() {
-            if (currentStream) {
-                currentStream.getTracks().forEach(t => t.stop());
-                currentStream = null;
-            }
+            cleanupStream();
             handleStreamEnded();
         }
 
         function handleStreamEnded() {
+            cleanupStream();
             video.srcObject = null;
             videoWrapper.style.display = 'none';
 

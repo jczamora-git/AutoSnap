@@ -1,9 +1,12 @@
 using System.Diagnostics;
 using System.Drawing;
+using AutoSnap.Audio;
 using AutoSnap.BrowserCapture;
 using AutoSnap.Capture;
 using AutoSnap.Models;
 using AutoSnap.Services;
+using AutoSnap.Transcription;
+using AutoSnap.Video;
 
 namespace AutoSnap.Forms;
 
@@ -17,6 +20,19 @@ public partial class MainForm : Form
     private readonly StorageService _storageService;
     private readonly SnapshotService _snapshotService;
     private readonly SnapshotScheduler _scheduler;
+
+    private readonly FFmpegService _ffmpegService;
+    private readonly FFprobeService _ffprobeService;
+    private readonly WhisperTranscriptionService _transcriptionService;
+    private readonly WhisperModelManager _modelManager;
+    private readonly TranscriptRecoveryService _recoveryService;
+
+    private VideoProcessingControl? _videoProcessingControl;
+    private TranscriptionControl? _transcriptionControl;
+
+    private Button btnNavCapture = null!;
+    private Button btnNavVideo = null!;
+    private Button btnNavTranscription = null!;
 
     private ICaptureSource? _selectedSource;
     private readonly System.Windows.Forms.Timer _previewTimer;
@@ -37,6 +53,12 @@ public partial class MainForm : Form
         _snapshotService = new SnapshotService(_storageService);
         _scheduler = new SnapshotScheduler(_snapshotService);
 
+        _ffmpegService = new FFmpegService(_appSettings.Video.CustomFFmpegPath);
+        _ffprobeService = new FFprobeService(_appSettings.Video.CustomFFprobePath);
+        _transcriptionService = new WhisperTranscriptionService();
+        _modelManager = new WhisperModelManager(_appSettings.Transcription.CustomModelsDirectory);
+        _recoveryService = new TranscriptRecoveryService();
+
         _scheduler.StateChanged += Scheduler_StateChanged;
         _scheduler.SnapshotSaved += Scheduler_SnapshotSaved;
         _scheduler.CaptureError += Scheduler_CaptureError;
@@ -53,9 +75,138 @@ public partial class MainForm : Form
         };
         _previewTimer.Tick += PreviewTimer_Tick;
 
+        InitializeNavigation();
         ApplySettingsToUi();
         UpdateStateUi(CaptureSessionState.Idle);
         SelectDefaultSource();
+    }
+
+    private void InitializeNavigation()
+    {
+        var pnlNav = new FlowLayoutPanel
+        {
+            Location = new Point(220, 16),
+            Size = new Size(420, 34),
+            FlowDirection = FlowDirection.LeftToRight,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left
+        };
+
+        btnNavCapture = new Button
+        {
+            Text = "📸 Capture",
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+            Size = new Size(110, 32),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(0, 120, 215),
+            ForeColor = Color.White
+        };
+        btnNavCapture.FlatAppearance.BorderSize = 0;
+        btnNavCapture.Click += (s, e) => SwitchNavView("Capture");
+
+        btnNavVideo = new Button
+        {
+            Text = "🎞 Local Video",
+            Font = new Font("Segoe UI", 9F, FontStyle.Regular),
+            Size = new Size(120, 32),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.White,
+            ForeColor = Color.FromArgb(60, 60, 60)
+        };
+        btnNavVideo.FlatAppearance.BorderSize = 0;
+        btnNavVideo.Click += (s, e) => SwitchNavView("Video");
+
+        btnNavTranscription = new Button
+        {
+            Text = "🎙 Transcription",
+            Font = new Font("Segoe UI", 9F, FontStyle.Regular),
+            Size = new Size(130, 32),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.White,
+            ForeColor = Color.FromArgb(60, 60, 60)
+        };
+        btnNavTranscription.FlatAppearance.BorderSize = 0;
+        btnNavTranscription.Click += (s, e) => SwitchNavView("Transcription");
+
+        pnlNav.Controls.Add(btnNavCapture);
+        pnlNav.Controls.Add(btnNavVideo);
+        pnlNav.Controls.Add(btnNavTranscription);
+
+        pnlHeader.Controls.Add(pnlNav);
+
+        _videoProcessingControl = new VideoProcessingControl(
+            _ffmpegService,
+            _ffprobeService,
+            _transcriptionService,
+            _modelManager,
+            _recoveryService,
+            _appSettings)
+        {
+            Dock = DockStyle.Fill,
+            Visible = false
+        };
+
+        _transcriptionControl = new TranscriptionControl(
+            _transcriptionService,
+            _modelManager,
+            _recoveryService,
+            _ffmpegService,
+            _browserCaptureServer,
+            _appSettings)
+        {
+            Dock = DockStyle.Fill,
+            Visible = false
+        };
+
+        pnlMain.Controls.Add(_videoProcessingControl);
+        pnlMain.Controls.Add(_transcriptionControl);
+    }
+
+    public void SwitchNavView(string view)
+    {
+        btnNavCapture.BackColor = Color.White;
+        btnNavCapture.ForeColor = Color.FromArgb(60, 60, 60);
+        btnNavCapture.Font = new Font("Segoe UI", 9F, FontStyle.Regular);
+
+        btnNavVideo.BackColor = Color.White;
+        btnNavVideo.ForeColor = Color.FromArgb(60, 60, 60);
+        btnNavVideo.Font = new Font("Segoe UI", 9F, FontStyle.Regular);
+
+        btnNavTranscription.BackColor = Color.White;
+        btnNavTranscription.ForeColor = Color.FromArgb(60, 60, 60);
+        btnNavTranscription.Font = new Font("Segoe UI", 9F, FontStyle.Regular);
+
+        switch (view)
+        {
+            case "Video":
+                tblLayout.Visible = false;
+                if (_videoProcessingControl != null) _videoProcessingControl.Visible = true;
+                if (_transcriptionControl != null) _transcriptionControl.Visible = false;
+
+                btnNavVideo.BackColor = Color.FromArgb(0, 120, 215);
+                btnNavVideo.ForeColor = Color.White;
+                btnNavVideo.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+                break;
+
+            case "Transcription":
+                tblLayout.Visible = false;
+                if (_videoProcessingControl != null) _videoProcessingControl.Visible = false;
+                if (_transcriptionControl != null) _transcriptionControl.Visible = true;
+
+                btnNavTranscription.BackColor = Color.FromArgb(0, 120, 215);
+                btnNavTranscription.ForeColor = Color.White;
+                btnNavTranscription.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+                break;
+
+            default:
+                tblLayout.Visible = true;
+                if (_videoProcessingControl != null) _videoProcessingControl.Visible = false;
+                if (_transcriptionControl != null) _transcriptionControl.Visible = false;
+
+                btnNavCapture.BackColor = Color.FromArgb(0, 120, 215);
+                btnNavCapture.ForeColor = Color.White;
+                btnNavCapture.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+                break;
+        }
     }
 
     private void ApplySettingsToUi()
@@ -334,8 +485,7 @@ public partial class MainForm : Form
         {
             if (rb == rbSourceVideo)
             {
-                MessageBox.Show(this, "Local Video frame extraction will be enabled in Phase 2.", "AutoSnap", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                rbSourceWindow.Checked = true;
+                SwitchNavView("Video");
                 return;
             }
 
@@ -767,6 +917,10 @@ public partial class MainForm : Form
         // Stop capture server cleanly
         _browserCaptureServer.Stop();
         _browserCaptureServer.Dispose();
+
+        _transcriptionService.Dispose();
+        _videoProcessingControl?.Dispose();
+        _transcriptionControl?.Dispose();
 
         base.OnFormClosing(e);
     }

@@ -17,12 +17,15 @@ public class BrowserCaptureSession : IDisposable
 
     public bool IsConnected => _webSocket.State == WebSocketState.Open;
     public bool HasActiveStream { get; private set; }
+    public bool HasAudioTrack { get; private set; }
     public string StreamTitle { get; private set; } = "Chrome Tab";
     public int StreamWidth { get; private set; }
     public int StreamHeight { get; private set; }
 
     public event EventHandler<(string Title, int Width, int Height)>? StreamStarted;
     public event EventHandler? StreamEnded;
+    public event EventHandler<bool>? AudioTrackStatusChanged;
+    public event EventHandler<byte[]>? AudioDataReceived;
     public event EventHandler? Disconnected;
 
     public BrowserCaptureSession(WebSocket webSocket)
@@ -109,6 +112,7 @@ public class BrowserCaptureSession : IDisposable
             }
         }
         HasActiveStream = false;
+        HasAudioTrack = false;
         StreamEnded?.Invoke(this, EventArgs.Empty);
     }
 
@@ -142,9 +146,17 @@ public class BrowserCaptureSession : IDisposable
 
                 if (ms.Length > 0)
                 {
-                    ms.Position = 0;
-                    string json = Encoding.UTF8.GetString(ms.ToArray());
-                    ProcessMessage(json);
+                    if (result.MessageType == WebSocketMessageType.Binary)
+                    {
+                        byte[] audioBytes = ms.ToArray();
+                        AudioDataReceived?.Invoke(this, audioBytes);
+                    }
+                    else
+                    {
+                        ms.Position = 0;
+                        string json = Encoding.UTF8.GetString(ms.ToArray());
+                        ProcessMessage(json);
+                    }
                 }
             }
         }
@@ -179,8 +191,14 @@ public class BrowserCaptureSession : IDisposable
                     StreamStarted?.Invoke(this, (StreamTitle, StreamWidth, StreamHeight));
                     break;
 
+                case "audioTrackStatus":
+                    HasAudioTrack = msg.HasAudio ?? false;
+                    AudioTrackStatusChanged?.Invoke(this, HasAudioTrack);
+                    break;
+
                 case "streamEnded":
                     HasActiveStream = false;
+                    HasAudioTrack = false;
                     StreamEnded?.Invoke(this, EventArgs.Empty);
                     break;
 

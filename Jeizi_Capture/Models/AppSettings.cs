@@ -4,6 +4,8 @@ public class AppSettings
 {
     public CaptureSettings Capture { get; set; } = new();
     public ChromeSettings Chrome { get; set; } = new();
+    public VideoSettings Video { get; set; } = new();
+    public TranscriptionSettings Transcription { get; set; } = new();
     public bool MinimizeToTray { get; set; } = true;
     public bool StartMinimized { get; set; } = false;
     public bool ContinueCapturingWhenMinimized { get; set; } = true;
