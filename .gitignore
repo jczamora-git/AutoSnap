@@ -1,0 +1,26 @@
+## Build and Output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+publish/
+artifacts/
+
+## Visual Studio
+.vs/
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+*.userprefs
+*.pidb
+*.booproj
+*.svclog
+
+## AutoSnap Runtime / Local Logs & Captures
+AutoSnap.log
+*.log
+TestResults/
+*.tmp
+thumbs.db
+.DS_Store

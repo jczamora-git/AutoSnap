@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <AssemblyName>AutoSnap</AssemblyName>
+    <RootNamespace>AutoSnap</RootNamespace>
+
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+
+    <Product>AutoSnap</Product>
+    <Title>AutoSnap</Title>
+    <Description>Automatic screenshot capture application for Windows.</Description>
+  </PropertyGroup>
+
+</Project>

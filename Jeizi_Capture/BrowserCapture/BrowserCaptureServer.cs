@@ -1,0 +1,252 @@
+using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using AutoSnap.Chrome;
+using AutoSnap.Models;
+
+namespace AutoSnap.BrowserCapture;
+
+public class BrowserCaptureServer : IDisposable
+{
+    private HttpListener? _listener;
+    private CancellationTokenSource? _cts;
+    private Task? _listenerTask;
+    private BrowserCaptureSession? _activeSession;
+    private readonly object _lock = new();
+    private bool _disposed;
+
+    public int Port { get; private set; }
+    public string Url => $"http://127.0.0.1:{Port}/";
+    public bool IsRunning => _listener != null && _listener.IsListening;
+    public bool HasActiveStream => _activeSession != null && _activeSession.HasActiveStream;
+    public BrowserCaptureSession? ActiveSession => _activeSession;
+
+    public event EventHandler<BrowserCaptureSession>? SessionConnected;
+    public event EventHandler? SessionDisconnected;
+    public event EventHandler<(string Title, int Width, int Height)>? StreamStarted;
+    public event EventHandler? StreamEnded;
+
+    public void Start(int preferredPort = 0)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (IsRunning)
+            return;
+
+        Port = preferredPort > 0 ? preferredPort : FindAvailablePort();
+
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+
+        _listener = new HttpListener();
+        _listener.Prefixes.Add($"http://127.0.0.1:{Port}/");
+        _listener.Start();
+
+        _listenerTask = Task.Run(() => ListenerLoopAsync(_cts.Token));
+    }
+
+    public static int FindAvailablePort()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    private async Task ListenerLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested && _listener != null && _listener.IsListening)
+        {
+            try
+            {
+                var context = await _listener.GetContextAsync();
+                _ = HandleRequestAsync(context);
+            }
+            catch (HttpListenerException)
+            {
+                break;
+            }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
+            catch
+            {
+                // Continue listening
+            }
+        }
+    }
+
+    private async Task HandleRequestAsync(HttpListenerContext context)
+    {
+        try
+        {
+            if (context.Request.IsWebSocketRequest && context.Request.Url?.AbsolutePath == "/ws")
+            {
+                var wsContext = await context.AcceptWebSocketAsync(null);
+                var session = new BrowserCaptureSession(wsContext.WebSocket);
+
+                lock (_lock)
+                {
+                    _activeSession?.Dispose();
+                    _activeSession = session;
+                }
+
+                session.StreamStarted += (s, e) => StreamStarted?.Invoke(this, e);
+                session.StreamEnded += (s, e) => StreamEnded?.Invoke(this, EventArgs.Empty);
+                session.Disconnected += (s, e) =>
+                {
+                    lock (_lock)
+                    {
+                        if (_activeSession == session)
+                        {
+                            _activeSession = null;
+                        }
+                    }
+                    SessionDisconnected?.Invoke(this, EventArgs.Empty);
+                };
+
+                session.Start();
+                SessionConnected?.Invoke(this, session);
+                return;
+            }
+
+            // HTTP GET request for the capture page
+            string html = BrowserCapturePage.GetHtml();
+            byte[] bytes = Encoding.UTF8.GetBytes(html);
+
+            context.Response.ContentType = "text/html; charset=utf-8";
+            context.Response.ContentLength64 = bytes.Length;
+            context.Response.StatusCode = 200;
+
+            await context.Response.OutputStream.WriteAsync(bytes);
+            context.Response.OutputStream.Close();
+        }
+        catch
+        {
+            try
+            {
+                context.Response.StatusCode = 500;
+                context.Response.Close();
+            }
+            catch
+            {
+                // Ignore failure on error response
+            }
+        }
+    }
+
+    public void OpenCapturePageInBrowser(string? customChromeExePath = null)
+    {
+        if (!IsRunning)
+        {
+            Start();
+        }
+
+        string? chromeExe = ChromeService.FindChromeExecutable(customChromeExePath);
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(chromeExe) && File.Exists(chromeExe))
+            {
+                // Open new tab in user's existing Chrome session
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = chromeExe,
+                    Arguments = $"\"{Url}\"",
+                    UseShellExecute = false
+                });
+            }
+            else
+            {
+                // Fallback to default browser
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = Url,
+                    UseShellExecute = true
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Could not open capture page in browser: {ex.Message}", ex);
+        }
+    }
+
+    public async Task<byte[]> RequestFrameAsync(
+        ImageFormatType format = ImageFormatType.Jpg,
+        int jpegQuality = 90,
+        CancellationToken cancellationToken = default)
+    {
+        BrowserCaptureSession? session;
+        lock (_lock)
+        {
+            session = _activeSession;
+        }
+
+        if (session == null || !session.IsConnected)
+        {
+            throw new InvalidOperationException("No browser capture tab is currently connected.");
+        }
+
+        if (!session.HasActiveStream)
+        {
+            throw new InvalidOperationException("Waiting for user to select a Chrome tab.");
+        }
+
+        return await session.RequestFrameAsync(format, jpegQuality, cancellationToken);
+    }
+
+    public async Task StopStreamAsync(CancellationToken cancellationToken = default)
+    {
+        BrowserCaptureSession? session;
+        lock (_lock)
+        {
+            session = _activeSession;
+        }
+
+        if (session != null)
+        {
+            await session.StopStreamAsync(cancellationToken);
+        }
+    }
+
+    public void Stop()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
+
+        lock (_lock)
+        {
+            _activeSession?.Dispose();
+            _activeSession = null;
+        }
+
+        if (_listener != null)
+        {
+            try
+            {
+                _listener.Stop();
+                _listener.Close();
+            }
+            catch
+            {
+                // Ignore listener close errors
+            }
+            _listener = null;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            _disposed = true;
+            Stop();
+        }
+    }
+}
