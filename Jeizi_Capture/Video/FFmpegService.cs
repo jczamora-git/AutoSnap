@@ -7,63 +7,20 @@ namespace AutoSnap.Video;
 public class FFmpegService
 {
     private readonly string? _customPath;
+    private readonly bool _useCustomPath;
 
-    public FFmpegService(string? customPath = null)
+    public FFmpegService(string? customPath = null, bool useCustomPath = false)
     {
         _customPath = customPath;
+        _useCustomPath = useCustomPath;
     }
 
-    public static string? FindExecutable(string? customPath = null)
+    public static string? FindExecutable(string? customPath = null, bool useCustom = false)
     {
-        if (!string.IsNullOrWhiteSpace(customPath) && File.Exists(customPath))
-            return customPath;
-
-        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-        string localProbe = Path.Combine(baseDir, "ffmpeg.exe");
-        if (File.Exists(localProbe)) return localProbe;
-
-        localProbe = Path.Combine(baseDir, "ffmpeg", "ffmpeg.exe");
-        if (File.Exists(localProbe)) return localProbe;
-
-        localProbe = Path.Combine(baseDir, "ffmpeg", "bin", "ffmpeg.exe");
-        if (File.Exists(localProbe)) return localProbe;
-
-        string localAppData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AutoSnap", "ffmpeg", "bin", "ffmpeg.exe");
-        if (File.Exists(localAppData)) return localAppData;
-
-        string? pathEnv = Environment.GetEnvironmentVariable("PATH");
-        if (!string.IsNullOrEmpty(pathEnv))
-        {
-            foreach (var path in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-            {
-                try
-                {
-                    string candidate = Path.Combine(path.Trim(), "ffmpeg.exe");
-                    if (File.Exists(candidate)) return candidate;
-                }
-                catch
-                {
-                    // Ignore invalid characters
-                }
-            }
-        }
-
-        string[] commonPaths =
-        {
-            @"C:\ffmpeg\bin\ffmpeg.exe",
-            @"C:\ProgramData\chocolatey\bin\ffmpeg.exe",
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "scoop", "shims", "ffmpeg.exe")
-        };
-
-        foreach (var path in commonPaths)
-        {
-            if (File.Exists(path)) return path;
-        }
-
-        return null;
+        return FFmpegManager.FindFFmpeg(customPath, useCustom);
     }
 
-    public bool IsAvailable => FindExecutable(_customPath) != null;
+    public bool IsAvailable => FindExecutable(_customPath, _useCustomPath) != null;
 
     public async Task ExtractFrameAsync(
         string videoPath,
@@ -73,7 +30,7 @@ public class FFmpegService
         int jpegQuality = 90,
         CancellationToken cancellationToken = default)
     {
-        string? ffmpegExe = FindExecutable(_customPath);
+        string? ffmpegExe = FindExecutable(_customPath, _useCustomPath);
         if (string.IsNullOrEmpty(ffmpegExe))
             throw new InvalidOperationException("ffmpeg.exe was not found. Please install FFmpeg or configure its path in Settings.");
 
@@ -123,7 +80,7 @@ public class FFmpegService
         string outputWavPath,
         CancellationToken cancellationToken = default)
     {
-        string? ffmpegExe = FindExecutable(_customPath);
+        string? ffmpegExe = FindExecutable(_customPath, _useCustomPath);
         if (string.IsNullOrEmpty(ffmpegExe))
             throw new InvalidOperationException("ffmpeg.exe was not found. Please install FFmpeg or configure its path in Settings.");
 

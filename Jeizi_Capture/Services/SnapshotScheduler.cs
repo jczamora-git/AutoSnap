@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AutoSnap.Capture;
 using AutoSnap.Models;
 
@@ -60,9 +61,26 @@ public class SnapshotScheduler : IDisposable
         await _captureLock.WaitAsync();
         try
         {
-            if (State == CaptureSessionState.Capturing || State == CaptureSessionState.Paused)
+            if (State == CaptureSessionState.Capturing || State == CaptureSessionState.Starting || State == CaptureSessionState.Paused)
             {
                 return; // Already running
+            }
+
+            // Ensure any lingering task is cleanly stopped before starting a new session
+            if (_sessionCts != null || _schedulerTask != null)
+            {
+                var oldCts = Interlocked.Exchange(ref _sessionCts, null);
+                var oldTask = Interlocked.Exchange(ref _schedulerTask, null);
+                if (oldCts != null)
+                {
+                    try
+                    {
+                        oldCts.Cancel();
+                        if (oldTask != null) await oldTask.ConfigureAwait(false);
+                    }
+                    catch { }
+                    finally { oldCts.Dispose(); }
+                }
             }
 
             _currentSource = source;
@@ -70,11 +88,13 @@ public class SnapshotScheduler : IDisposable
             _capturedCount = 0;
             _isPaused = false;
             _sessionStartTime = DateTime.Now;
-            _sessionCts?.Cancel();
-            _sessionCts?.Dispose();
-            _sessionCts = new CancellationTokenSource();
+
+            var cts = new CancellationTokenSource();
+            _sessionCts = cts;
+            CancellationToken token = cts.Token;
 
             State = CaptureSessionState.Starting;
+            Debug.WriteLine("[SnapshotScheduler] Session started");
 
             // Take initial snapshot immediately on start
             _nextScheduledCaptureTime = DateTime.Now.Add(_currentSettings.Interval);
@@ -82,7 +102,7 @@ public class SnapshotScheduler : IDisposable
 
             _ = PerformCaptureAndSaveAsync(_currentSource, _currentSettings, isScheduled: true);
 
-            _schedulerTask = Task.Run(() => SchedulerLoopAsync(_sessionCts.Token));
+            _schedulerTask = Task.Run(() => SchedulerLoopAsync(token), token);
         }
         finally
         {
@@ -97,6 +117,7 @@ public class SnapshotScheduler : IDisposable
             if (_state != CaptureSessionState.Capturing) return;
             _isPaused = true;
             State = CaptureSessionState.Paused;
+            Debug.WriteLine("[SnapshotScheduler] Session paused");
         }
     }
 
@@ -112,6 +133,7 @@ public class SnapshotScheduler : IDisposable
                 _nextScheduledCaptureTime = DateTime.Now.Add(_currentSettings.Interval);
             }
             State = CaptureSessionState.Capturing;
+            Debug.WriteLine("[SnapshotScheduler] Session resumed");
         }
     }
 
@@ -126,26 +148,38 @@ public class SnapshotScheduler : IDisposable
             State = CaptureSessionState.Stopping;
             _isPaused = false;
 
-            if (_sessionCts != null)
-            {
-                _sessionCts.Cancel();
-            }
+            var cts = Interlocked.Exchange(ref _sessionCts, null);
+            var task = Interlocked.Exchange(ref _schedulerTask, null);
 
-            if (_schedulerTask != null)
+            if (cts != null)
             {
                 try
                 {
-                    await _schedulerTask;
+                    cts.Cancel();
+                    Debug.WriteLine("[SnapshotScheduler] Cancellation requested");
+
+                    if (task != null)
+                    {
+                        try
+                        {
+                            await task.ConfigureAwait(false);
+                            Debug.WriteLine("[SnapshotScheduler] Worker task completed");
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Expected during normal shutdown.
+                        }
+                        catch (Exception ex)
+                        {
+                            CaptureError?.Invoke(this, ("Scheduler stopped with error.", ex));
+                        }
+                    }
                 }
-                catch (OperationCanceledException)
+                finally
                 {
-                    // Normal cancellation
+                    cts.Dispose();
+                    Debug.WriteLine("[SnapshotScheduler] CTS disposed");
                 }
-                catch (Exception ex)
-                {
-                    CaptureError?.Invoke(this, ("Scheduler stopped with error.", ex));
-                }
-                _schedulerTask = null;
             }
 
             State = CaptureSessionState.Idle;
@@ -261,10 +295,23 @@ public class SnapshotScheduler : IDisposable
     {
         if (!_disposed)
         {
-            _sessionCts?.Cancel();
-            _sessionCts?.Dispose();
-            _captureLock.Dispose();
             _disposed = true;
+            var cts = Interlocked.Exchange(ref _sessionCts, null);
+            var task = Interlocked.Exchange(ref _schedulerTask, null);
+            if (cts != null)
+            {
+                try
+                {
+                    cts.Cancel();
+                    task?.GetAwaiter().GetResult();
+                }
+                catch { }
+                finally
+                {
+                    cts.Dispose();
+                }
+            }
+            _captureLock.Dispose();
         }
     }
 }

@@ -30,24 +30,53 @@ public class BrowserCaptureServer : IDisposable
     public event EventHandler<bool>? AudioTrackStatusChanged;
     public event EventHandler<byte[]>? AudioDataReceived;
 
+    private readonly SemaphoreSlim _serverLock = new(1, 1);
+
     public void Start(int preferredPort = 0)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (IsRunning)
-            return;
+        _serverLock.Wait();
+        try
+        {
+            if (IsRunning)
+                return;
 
-        Port = preferredPort > 0 ? preferredPort : FindAvailablePort();
+            Port = preferredPort > 0 ? preferredPort : FindAvailablePort();
 
-        _cts?.Cancel();
-        _cts?.Dispose();
-        _cts = new CancellationTokenSource();
+            if (_cts != null || _listenerTask != null)
+            {
+                var oldCts = Interlocked.Exchange(ref _cts, null);
+                var oldTask = Interlocked.Exchange(ref _listenerTask, null);
+                if (oldCts != null)
+                {
+                    try
+                    {
+                        oldCts.Cancel();
+                        oldTask?.GetAwaiter().GetResult();
+                    }
+                    catch { }
+                    finally
+                    {
+                        oldCts.Dispose();
+                    }
+                }
+            }
 
-        _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://127.0.0.1:{Port}/");
-        _listener.Start();
+            var cts = new CancellationTokenSource();
+            _cts = cts;
 
-        _listenerTask = Task.Run(() => ListenerLoopAsync(_cts.Token));
+            _listener = new HttpListener();
+            _listener.Prefixes.Add($"http://127.0.0.1:{Port}/");
+            _listener.Start();
+
+            Debug.WriteLine($"[BrowserCaptureServer] Server started on port {Port}");
+            _listenerTask = Task.Run(() => ListenerLoopAsync(cts.Token), cts.Token);
+        }
+        finally
+        {
+            _serverLock.Release();
+        }
     }
 
     public static int FindAvailablePort()
@@ -65,7 +94,7 @@ public class BrowserCaptureServer : IDisposable
         {
             try
             {
-                var context = await _listener.GetContextAsync();
+                var context = await _listener.GetContextAsync().ConfigureAwait(false);
                 _ = HandleRequestAsync(context);
             }
             catch (HttpListenerException)
@@ -73,6 +102,10 @@ public class BrowserCaptureServer : IDisposable
                 break;
             }
             catch (ObjectDisposedException)
+            {
+                break;
+            }
+            catch (OperationCanceledException)
             {
                 break;
             }
@@ -221,28 +254,49 @@ public class BrowserCaptureServer : IDisposable
 
     public void Stop()
     {
-        _cts?.Cancel();
-        _cts?.Dispose();
-        _cts = null;
-
-        lock (_lock)
+        _serverLock.Wait();
+        try
         {
-            _activeSession?.Dispose();
-            _activeSession = null;
+            var cts = Interlocked.Exchange(ref _cts, null);
+            var task = Interlocked.Exchange(ref _listenerTask, null);
+
+            Debug.WriteLine("[BrowserCaptureServer] Stop requested");
+
+            if (_listener != null)
+            {
+                try
+                {
+                    _listener.Stop();
+                    _listener.Close();
+                }
+                catch { }
+                _listener = null;
+            }
+
+            if (cts != null)
+            {
+                try
+                {
+                    cts.Cancel();
+                    task?.GetAwaiter().GetResult();
+                }
+                catch { }
+                finally
+                {
+                    cts.Dispose();
+                    Debug.WriteLine("[BrowserCaptureServer] CTS disposed");
+                }
+            }
+
+            lock (_lock)
+            {
+                _activeSession?.Dispose();
+                _activeSession = null;
+            }
         }
-
-        if (_listener != null)
+        finally
         {
-            try
-            {
-                _listener.Stop();
-                _listener.Close();
-            }
-            catch
-            {
-                // Ignore listener close errors
-            }
-            _listener = null;
+            _serverLock.Release();
         }
     }
 
@@ -252,6 +306,7 @@ public class BrowserCaptureServer : IDisposable
         {
             _disposed = true;
             Stop();
+            _serverLock.Dispose();
         }
     }
 }

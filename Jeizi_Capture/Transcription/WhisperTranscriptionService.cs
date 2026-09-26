@@ -54,9 +54,11 @@ public class WhisperTranscriptionService : ITranscriptionService
             throw new InvalidOperationException("No Whisper model is currently loaded. Please select and load a model first.");
 
         string lang = GetLanguageCode(languageMode);
+        int threads = Math.Max(1, Environment.ProcessorCount <= 4 ? Environment.ProcessorCount - 1 : Environment.ProcessorCount - 2);
 
         using var processor = factory.CreateBuilder()
             .WithLanguage(lang)
+            .WithThreads(threads)
             .Build();
 
         var segments = new List<TranscriptSegment>();

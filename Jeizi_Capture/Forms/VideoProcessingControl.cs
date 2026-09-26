@@ -216,7 +216,7 @@ public class VideoProcessingControl : UserControl
             Size = new Size(140, 24),
             Font = new Font("Segoe UI", 8.5F)
         };
-        _cmbModel.Items.AddRange(new object[] { "Small", "Base", "Tiny", "Medium" });
+        _cmbModel.Items.AddRange(new object[] { "Small", "Base", "Tiny", "Medium", "Large v3", "Large v3 Turbo", "Large v3 Turbo Q5" });
         _cmbModel.SelectedIndex = 0;
 
         _btnManageModels = new Button
@@ -488,7 +488,10 @@ public class VideoProcessingControl : UserControl
             }
         }
 
-        _processingCts = new CancellationTokenSource();
+        var cts = new CancellationTokenSource();
+        _processingCts = cts;
+        CancellationToken token = cts.Token;
+
         _btnProcess.Visible = false;
         _btnCancel.Visible = true;
         _btnBrowse.Enabled = false;
@@ -550,7 +553,7 @@ public class VideoProcessingControl : UserControl
 
         try
         {
-            var result = await session.ProcessVideoAsync(_selectedVideo, options, _processingCts.Token);
+            var result = await session.ProcessVideoAsync(_selectedVideo, options, token);
             if (result.Success)
             {
                 _progressBar.Value = 100;
@@ -575,8 +578,19 @@ public class VideoProcessingControl : UserControl
             _btnProcess.Visible = true;
             _btnCancel.Visible = false;
             _btnBrowse.Enabled = true;
-            _processingCts?.Dispose();
-            _processingCts = null;
+            var oldCts = Interlocked.Exchange(ref _processingCts, null);
+            oldCts?.Dispose();
         }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            var oldCts = Interlocked.Exchange(ref _processingCts, null);
+            oldCts?.Cancel();
+            oldCts?.Dispose();
+        }
+        base.Dispose(disposing);
     }
 }

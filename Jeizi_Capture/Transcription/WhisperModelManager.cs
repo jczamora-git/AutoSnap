@@ -9,9 +9,21 @@ public class WhisperModelInfo
     public string DownloadUrl { get; init; } = string.Empty;
     public long ApproximateSizeBytes { get; init; }
     public string Description { get; init; } = string.Empty;
+    public string QualityTier { get; init; } = "Good";
+    public string SpeedTier { get; init; } = "Fast";
     public bool IsRecommended { get; init; }
 
-    public string SizeFormatted => $"{ApproximateSizeBytes / (1024.0 * 1024.0):0} MB";
+    public string SizeFormatted
+    {
+        get
+        {
+            if (ApproximateSizeBytes >= 1024L * 1024 * 1024)
+            {
+                return $"{ApproximateSizeBytes / (1024.0 * 1024.0 * 1024.0):0.0} GB";
+            }
+            return $"{ApproximateSizeBytes / (1024.0 * 1024.0):0} MB";
+        }
+    }
 }
 
 public class WhisperModelManager
@@ -28,24 +40,30 @@ public class WhisperModelManager
             Name = "Tiny",
             FileName = "ggml-tiny.bin",
             DownloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
-            ApproximateSizeBytes = 75 * 1024 * 1024,
-            Description = "Fastest speed, minimal memory usage (~75 MB)."
+            ApproximateSizeBytes = 75L * 1024 * 1024,
+            Description = "Fastest / lowest resource use. Best for quick rough transcription.",
+            QualityTier = "Basic",
+            SpeedTier = "Ultra Fast"
         },
         new WhisperModelInfo
         {
             Name = "Base",
             FileName = "ggml-base.bin",
             DownloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
-            ApproximateSizeBytes = 142 * 1024 * 1024,
-            Description = "Balanced speed and accuracy (~142 MB)."
+            ApproximateSizeBytes = 142L * 1024 * 1024,
+            Description = "Lightweight and faster than Small. Useful for low-end systems.",
+            QualityTier = "Moderate",
+            SpeedTier = "Very Fast"
         },
         new WhisperModelInfo
         {
             Name = "Small",
             FileName = "ggml-small.bin",
             DownloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
-            ApproximateSizeBytes = 466 * 1024 * 1024,
-            Description = "Recommended for English, Filipino, and Taglish multilingual transcription (~466 MB).",
+            ApproximateSizeBytes = 466L * 1024 * 1024,
+            Description = "Recommended balanced model. Good for English, Filipino, and Taglish.",
+            QualityTier = "High",
+            SpeedTier = "Fast",
             IsRecommended = true
         },
         new WhisperModelInfo
@@ -54,7 +72,41 @@ public class WhisperModelManager
             FileName = "ggml-medium.bin",
             DownloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
             ApproximateSizeBytes = 1536L * 1024 * 1024,
-            Description = "Highest accuracy for complex audio (~1.5 GB)."
+            Description = "Higher accuracy but slower and more memory intensive.",
+            QualityTier = "Very High",
+            SpeedTier = "Moderate"
+        },
+        new WhisperModelInfo
+        {
+            Name = "Large v3",
+            FileName = "ggml-large-v3.bin",
+            DownloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
+            ApproximateSizeBytes = 2900L * 1024 * 1024,
+            Description = "Highest accuracy option. Very demanding, especially for live CPU transcription.",
+            QualityTier = "Maximum",
+            SpeedTier = "Slow"
+        },
+        new WhisperModelInfo
+        {
+            Name = "Large v3 Turbo",
+            FileName = "ggml-large-v3-turbo.bin",
+            DownloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+            ApproximateSizeBytes = 1536L * 1024 * 1024,
+            Description = "High accuracy with significantly faster inference than full Large v3. Recommended for powerful systems.",
+            QualityTier = "Maximum",
+            SpeedTier = "Fast",
+            IsRecommended = true
+        },
+        new WhisperModelInfo
+        {
+            Name = "Large v3 Turbo Q5",
+            FileName = "ggml-large-v3-turbo-q5_0.bin",
+            DownloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+            ApproximateSizeBytes = 547L * 1024 * 1024,
+            Description = "Quantized Turbo model. Lower storage/RAM requirement with strong speed/quality balance.",
+            QualityTier = "High",
+            SpeedTier = "Very Fast",
+            IsRecommended = true
         }
     };
 
@@ -67,14 +119,15 @@ public class WhisperModelManager
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AutoSnap", "Models", "Whisper");
 
         Directory.CreateDirectory(_modelsDirectory);
-        _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromHours(1) };
+        _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromHours(2) };
     }
 
     public string GetModelPath(string modelNameOrFileName)
     {
         var model = AvailableModels.FirstOrDefault(m =>
             m.Name.Equals(modelNameOrFileName, StringComparison.OrdinalIgnoreCase) ||
-            m.FileName.Equals(modelNameOrFileName, StringComparison.OrdinalIgnoreCase));
+            m.FileName.Equals(modelNameOrFileName, StringComparison.OrdinalIgnoreCase) ||
+            (modelNameOrFileName.Equals("Turbo Q5", StringComparison.OrdinalIgnoreCase) && m.Name.Contains("Q5", StringComparison.OrdinalIgnoreCase)));
 
         string fileName = model != null ? model.FileName : modelNameOrFileName;
         if (!fileName.EndsWith(".bin", StringComparison.OrdinalIgnoreCase))
@@ -126,6 +179,16 @@ public class WhisperModelManager
         IProgress<(long BytesDownloaded, long TotalBytes, double Percent, double SpeedMbPerSec)>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        // 1. Check free disk space
+        var drive = new DriveInfo(Path.GetPathRoot(_modelsDirectory)!);
+        long requiredSpace = model.ApproximateSizeBytes + (50L * 1024 * 1024);
+        if (drive.AvailableFreeSpace < requiredSpace)
+        {
+            double reqMb = requiredSpace / (1024.0 * 1024.0);
+            double freeMb = drive.AvailableFreeSpace / (1024.0 * 1024.0);
+            throw new InvalidOperationException($"Not enough disk space on drive {drive.Name}. Required: ~{reqMb:0} MB, Available: {freeMb:0} MB.");
+        }
+
         string finalPath = GetModelPath(model.FileName);
         string partPath = finalPath + ".part";
 
@@ -167,7 +230,7 @@ public class WhisperModelManager
         if (fi.Length < 1024 * 1024)
         {
             try { File.Delete(partPath); } catch { }
-            throw new InvalidOperationException("Downloaded model file is invalid or too small.");
+            throw new InvalidOperationException("Downloaded model file is invalid or incomplete.");
         }
 
         if (File.Exists(finalPath))
@@ -184,7 +247,7 @@ public class WhisperModelManager
         {
             if (_activeModelsInUse.Contains(model.Name) || _activeModelsInUse.Contains(model.FileName))
             {
-                throw new InvalidOperationException($"Cannot delete model '{model.Name}' because it is currently in use.");
+                throw new InvalidOperationException($"Cannot delete model '{model.Name}' because it is currently in use by an active session.");
             }
         }
 

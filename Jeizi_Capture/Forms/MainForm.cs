@@ -117,9 +117,9 @@ public partial class MainForm : Form
 
         btnNavTranscription = new Button
         {
-            Text = "🎙 Transcription",
+            Text = "🎙 Transcription  [BETA]",
             Font = new Font("Segoe UI", 9F, FontStyle.Regular),
-            Size = new Size(130, 32),
+            Size = new Size(165, 32),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.White,
             ForeColor = Color.FromArgb(60, 60, 60)
@@ -879,6 +879,8 @@ public partial class MainForm : Form
         await _scheduler.StopAsync();
     }
 
+    private bool _isShuttingDown;
+
     private async void trayMenuExit_Click(object sender, EventArgs e)
     {
         _isExplicitExit = true;
@@ -908,19 +910,34 @@ public partial class MainForm : Form
             return;
         }
 
-        _previewTimer.Stop();
-        _previewTimer.Dispose();
-        _scheduler.Dispose();
-        _selectedSource?.Dispose();
-        _settingsService.SaveSettings(_appSettings);
+        if (_isShuttingDown)
+            return;
 
-        // Stop capture server cleanly
-        _browserCaptureServer.Stop();
-        _browserCaptureServer.Dispose();
+        _isShuttingDown = true;
 
-        _transcriptionService.Dispose();
-        _videoProcessingControl?.Dispose();
-        _transcriptionControl?.Dispose();
+        try
+        {
+            _previewTimer.Stop();
+            _previewTimer.Dispose();
+
+            _scheduler.StopAsync().GetAwaiter().GetResult();
+            _scheduler.Dispose();
+
+            _selectedSource?.Dispose();
+            _settingsService.SaveSettings(_appSettings);
+
+            // Stop capture server cleanly
+            _browserCaptureServer.Stop();
+            _browserCaptureServer.Dispose();
+
+            _videoProcessingControl?.Dispose();
+            _transcriptionControl?.Dispose();
+            _transcriptionService.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[MainForm] Shutdown error: {ex.Message}");
+        }
 
         base.OnFormClosing(e);
     }

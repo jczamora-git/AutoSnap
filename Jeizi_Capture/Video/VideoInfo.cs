@@ -9,6 +9,7 @@ public class VideoInfo
     public int Height { get; set; }
     public double FrameRate { get; set; }
     public string Codec { get; set; } = string.Empty;
+    public string Format { get; set; } = string.Empty;
     public bool HasAudio { get; set; }
     public string AudioCodec { get; set; } = string.Empty;
     public long FileSizeBytes { get; set; }

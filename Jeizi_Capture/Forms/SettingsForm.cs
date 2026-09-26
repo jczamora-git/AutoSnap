@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AutoSnap.Chrome;
 using AutoSnap.Models;
 using AutoSnap.Transcription;
@@ -24,12 +25,20 @@ public partial class SettingsForm : Form
     private TabPage tabTranscription = null!;
 
     // Video Tab controls
+    private Label lblManagedStatus = null!;
+    private Label lblManagedLocation = null!;
+    private Button btnInstallManagedFFmpeg = null!;
+    private Button btnOpenFFmpegFolder = null!;
+    private Button btnTestFFmpeg = null!;
+    private ProgressBar progressFFmpeg = null!;
+    private Label lblFFmpegProgress = null!;
+
+    private CheckBox chkUseCustomFFmpeg = null!;
     private TextBox txtFFmpegPath = null!;
     private TextBox txtFFprobePath = null!;
     private Button btnBrowseFFmpeg = null!;
     private Button btnBrowseFFprobe = null!;
-    private Button btnTestFFmpeg = null!;
-    private Label lblFFmpegStatus = null!;
+    private Label lblCustomStatus = null!;
 
     // Transcription Tab controls
     private ComboBox cmbDefaultLanguage = null!;
@@ -45,73 +54,182 @@ public partial class SettingsForm : Form
 
     private void InitializeExtendedTabs()
     {
-        // Video Tab
+        // 1. Video / FFmpeg Tab
         tabVideo = new TabPage("Video / FFmpeg")
         {
             Padding = new Padding(12),
-            UseVisualStyleBackColor = true
+            UseVisualStyleBackColor = true,
+            AutoScroll = true
         };
 
-        var grpFFmpeg = new GroupBox
+        // Managed FFmpeg Card
+        var grpManaged = new GroupBox
         {
-            Text = "FFmpeg & FFprobe Configuration",
+            Text = "AutoSnap-Managed FFmpeg & FFprobe (Recommended)",
             Dock = DockStyle.Top,
-            Height = 220,
-            Padding = new Padding(12)
+            Height = 195,
+            Padding = new Padding(12),
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(33, 37, 41)
         };
 
-        var lblFFmpeg = new Label { Text = "Custom FFmpeg Path (optional if on system PATH):", Location = new Point(14, 26), AutoSize = true };
-        txtFFmpegPath = new TextBox { Location = new Point(14, 46), Size = new Size(380, 24), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-        btnBrowseFFmpeg = new Button { Text = "Browse...", Location = new Point(404, 44), Size = new Size(85, 27), Anchor = AnchorStyles.Top | AnchorStyles.Right };
+        lblManagedStatus = new Label
+        {
+            Text = "Status: Checking...",
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(108, 117, 125),
+            Location = new Point(14, 26),
+            AutoSize = true
+        };
+
+        lblManagedLocation = new Label
+        {
+            Text = $"Location: {FFmpegManager.GetManagedDirectory()}",
+            Font = new Font("Segoe UI", 8F),
+            ForeColor = Color.FromArgb(108, 117, 125),
+            Location = new Point(14, 50),
+            Size = new Size(470, 20)
+        };
+
+        btnInstallManagedFFmpeg = new Button
+        {
+            Text = "📥 Install FFmpeg",
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+            Location = new Point(14, 76),
+            Size = new Size(150, 32),
+            BackColor = Color.FromArgb(0, 120, 215),
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat
+        };
+        btnInstallManagedFFmpeg.FlatAppearance.BorderSize = 0;
+        btnInstallManagedFFmpeg.Click += BtnInstallManagedFFmpeg_Click;
+
+        btnOpenFFmpegFolder = new Button
+        {
+            Text = "📂 Open Folder",
+            Font = new Font("Segoe UI", 8.5F),
+            Location = new Point(172, 76),
+            Size = new Size(110, 32),
+            BackColor = Color.FromArgb(233, 236, 239),
+            FlatStyle = FlatStyle.Flat
+        };
+        btnOpenFFmpegFolder.FlatAppearance.BorderSize = 0;
+        btnOpenFFmpegFolder.Click += (s, e) =>
+        {
+            string dir = FFmpegManager.GetManagedDirectory();
+            Directory.CreateDirectory(dir);
+            Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+        };
+
+        btnTestFFmpeg = new Button
+        {
+            Text = "🔍 Test FFmpeg",
+            Font = new Font("Segoe UI", 8.5F),
+            Location = new Point(290, 76),
+            Size = new Size(110, 32),
+            BackColor = Color.FromArgb(233, 236, 239),
+            FlatStyle = FlatStyle.Flat
+        };
+        btnTestFFmpeg.FlatAppearance.BorderSize = 0;
+        btnTestFFmpeg.Click += BtnTestFFmpeg_Click;
+
+        progressFFmpeg = new ProgressBar
+        {
+            Location = new Point(14, 118),
+            Size = new Size(470, 16),
+            Visible = false
+        };
+
+        lblFFmpegProgress = new Label
+        {
+            Text = "",
+            Font = new Font("Segoe UI", 8F),
+            ForeColor = Color.FromArgb(73, 80, 87),
+            Location = new Point(14, 138),
+            Size = new Size(470, 20),
+            Visible = false
+        };
+
+        var lblManagedNote = new Label
+        {
+            Text = "Downloads Windows x64 essentials from official Gyan.dev build. No admin rights or system PATH modification required.",
+            Font = new Font("Segoe UI", 7.5F, FontStyle.Italic),
+            ForeColor = Color.FromArgb(108, 117, 125),
+            Location = new Point(14, 162),
+            Size = new Size(470, 24)
+        };
+
+        grpManaged.Controls.Add(lblManagedStatus);
+        grpManaged.Controls.Add(lblManagedLocation);
+        grpManaged.Controls.Add(btnInstallManagedFFmpeg);
+        grpManaged.Controls.Add(btnOpenFFmpegFolder);
+        grpManaged.Controls.Add(btnTestFFmpeg);
+        grpManaged.Controls.Add(progressFFmpeg);
+        grpManaged.Controls.Add(lblFFmpegProgress);
+        grpManaged.Controls.Add(lblManagedNote);
+
+        // Custom Installation Card
+        var grpCustom = new GroupBox
+        {
+            Text = "Advanced: Custom Installation Override",
+            Dock = DockStyle.Top,
+            Height = 180,
+            Padding = new Padding(12),
+            Margin = new Padding(0, 10, 0, 0),
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(33, 37, 41)
+        };
+
+        chkUseCustomFFmpeg = new CheckBox
+        {
+            Text = "Use Custom FFmpeg / FFprobe binaries",
+            Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+            Location = new Point(14, 24),
+            AutoSize = true
+        };
+        chkUseCustomFFmpeg.CheckedChanged += (s, e) => UpdateCustomFFmpegUiState();
+
+        var lblFFmpeg = new Label { Text = "Custom ffmpeg.exe Path:", Location = new Point(14, 52), AutoSize = true, Font = new Font("Segoe UI", 8F) };
+        txtFFmpegPath = new TextBox { Location = new Point(14, 70), Size = new Size(380, 23), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Segoe UI", 8.5F) };
+        btnBrowseFFmpeg = new Button { Text = "Browse...", Location = new Point(402, 69), Size = new Size(85, 25), Anchor = AnchorStyles.Top | AnchorStyles.Right, Font = new Font("Segoe UI", 8F) };
         btnBrowseFFmpeg.Click += (s, e) =>
         {
             using var ofd = new OpenFileDialog { Title = "Locate ffmpeg.exe", Filter = "ffmpeg.exe|ffmpeg.exe|All Executables (*.exe)|*.exe" };
             if (ofd.ShowDialog(this) == DialogResult.OK) txtFFmpegPath.Text = ofd.FileName;
         };
 
-        var lblFFprobe = new Label { Text = "Custom FFprobe Path (optional if on system PATH):", Location = new Point(14, 82), AutoSize = true };
-        txtFFprobePath = new TextBox { Location = new Point(14, 102), Size = new Size(380, 24), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-        btnBrowseFFprobe = new Button { Text = "Browse...", Location = new Point(404, 100), Size = new Size(85, 27), Anchor = AnchorStyles.Top | AnchorStyles.Right };
+        var lblFFprobe = new Label { Text = "Custom ffprobe.exe Path:", Location = new Point(14, 100), AutoSize = true, Font = new Font("Segoe UI", 8F) };
+        txtFFprobePath = new TextBox { Location = new Point(14, 118), Size = new Size(380, 23), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Segoe UI", 8.5F) };
+        btnBrowseFFprobe = new Button { Text = "Browse...", Location = new Point(402, 117), Size = new Size(85, 25), Anchor = AnchorStyles.Top | AnchorStyles.Right, Font = new Font("Segoe UI", 8F) };
         btnBrowseFFprobe.Click += (s, e) =>
         {
             using var ofd = new OpenFileDialog { Title = "Locate ffprobe.exe", Filter = "ffprobe.exe|ffprobe.exe|All Executables (*.exe)|*.exe" };
             if (ofd.ShowDialog(this) == DialogResult.OK) txtFFprobePath.Text = ofd.FileName;
         };
 
-        btnTestFFmpeg = new Button { Text = "🔍 Test FFmpeg & FFprobe", Location = new Point(14, 140), Size = new Size(180, 30) };
-        btnTestFFmpeg.Click += BtnTestFFmpeg_Click;
-
-        lblFFmpegStatus = new Label
+        lblCustomStatus = new Label
         {
-            Text = "Status: Not tested",
-            Location = new Point(205, 146),
-            AutoSize = true,
-            ForeColor = Color.FromArgb(108, 117, 125)
-        };
-
-        var lblNote = new Label
-        {
-            Text = "Note: AutoSnap will check PATH, Chocolatey, Scoop, and app folders automatically.",
-            Location = new Point(14, 180),
-            AutoSize = true,
+            Text = "",
+            Font = new Font("Segoe UI", 8F, FontStyle.Italic),
             ForeColor = Color.FromArgb(108, 117, 125),
-            Font = new Font("Segoe UI", 8F, FontStyle.Italic)
+            Location = new Point(14, 148),
+            AutoSize = true
         };
 
-        grpFFmpeg.Controls.Add(lblFFmpeg);
-        grpFFmpeg.Controls.Add(txtFFmpegPath);
-        grpFFmpeg.Controls.Add(btnBrowseFFmpeg);
-        grpFFmpeg.Controls.Add(lblFFprobe);
-        grpFFmpeg.Controls.Add(txtFFprobePath);
-        grpFFmpeg.Controls.Add(btnBrowseFFprobe);
-        grpFFmpeg.Controls.Add(btnTestFFmpeg);
-        grpFFmpeg.Controls.Add(lblFFmpegStatus);
-        grpFFmpeg.Controls.Add(lblNote);
+        grpCustom.Controls.Add(chkUseCustomFFmpeg);
+        grpCustom.Controls.Add(lblFFmpeg);
+        grpCustom.Controls.Add(txtFFmpegPath);
+        grpCustom.Controls.Add(btnBrowseFFmpeg);
+        grpCustom.Controls.Add(lblFFprobe);
+        grpCustom.Controls.Add(txtFFprobePath);
+        grpCustom.Controls.Add(btnBrowseFFprobe);
+        grpCustom.Controls.Add(lblCustomStatus);
 
-        tabVideo.Controls.Add(grpFFmpeg);
+        tabVideo.Controls.Add(grpCustom);
+        tabVideo.Controls.Add(grpManaged);
 
-        // Transcription Tab
-        tabTranscription = new TabPage("Transcription")
+        // 2. Transcription Tab
+        tabTranscription = new TabPage("Transcription [Beta]")
         {
             Padding = new Padding(12),
             UseVisualStyleBackColor = true,
@@ -120,30 +238,32 @@ public partial class SettingsForm : Form
 
         var grpWhisper = new GroupBox
         {
-            Text = "Local Whisper AI Settings",
+            Text = "Local Whisper AI Settings — Status: Experimental",
             Dock = DockStyle.Top,
             Height = 150,
-            Padding = new Padding(12)
+            Padding = new Padding(12),
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(33, 37, 41)
         };
 
-        var lblLang = new Label { Text = "Default Language:", Location = new Point(14, 26), AutoSize = true };
-        cmbDefaultLanguage = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(135, 22), Size = new Size(160, 24) };
+        var lblLang = new Label { Text = "Default Language:", Location = new Point(14, 26), AutoSize = true, Font = new Font("Segoe UI", 8.5F) };
+        cmbDefaultLanguage = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(135, 22), Size = new Size(160, 24), Font = new Font("Segoe UI", 8.5F) };
         cmbDefaultLanguage.Items.AddRange(new object[] { "Taglish (Recommended)", "English", "Filipino / Tagalog", "Auto Detect" });
 
-        var lblModel = new Label { Text = "Default Model:", Location = new Point(14, 58), AutoSize = true };
-        cmbDefaultModel = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(135, 54), Size = new Size(160, 24) };
-        cmbDefaultModel.Items.AddRange(new object[] { "Small", "Base", "Tiny", "Medium" });
+        var lblModel = new Label { Text = "Default Model:", Location = new Point(14, 58), AutoSize = true, Font = new Font("Segoe UI", 8.5F) };
+        cmbDefaultModel = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(135, 54), Size = new Size(160, 24), Font = new Font("Segoe UI", 8.5F) };
+        cmbDefaultModel.Items.AddRange(new object[] { "Small", "Base", "Tiny", "Medium", "Large v3", "Large v3 Turbo", "Large v3 Turbo Q5" });
 
-        btnManageModels = new Button { Text = "📥 Manage Models...", Location = new Point(310, 53), Size = new Size(140, 27) };
+        btnManageModels = new Button { Text = "📥 Manage Models...", Location = new Point(310, 53), Size = new Size(140, 27), Font = new Font("Segoe UI", 8.5F) };
         btnManageModels.Click += (s, e) =>
         {
             using var dlg = new WhisperModelManagerForm(_modelManager);
             dlg.ShowDialog(this);
         };
 
-        var lblDir = new Label { Text = "Models Directory:", Location = new Point(14, 90), AutoSize = true };
-        txtModelsDir = new TextBox { Location = new Point(135, 86), Size = new Size(260, 24), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-        btnBrowseModelsDir = new Button { Text = "Browse...", Location = new Point(404, 84), Size = new Size(85, 27), Anchor = AnchorStyles.Top | AnchorStyles.Right };
+        var lblDir = new Label { Text = "Models Directory:", Location = new Point(14, 90), AutoSize = true, Font = new Font("Segoe UI", 8.5F) };
+        txtModelsDir = new TextBox { Location = new Point(135, 86), Size = new Size(260, 24), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Segoe UI", 8.5F) };
+        btnBrowseModelsDir = new Button { Text = "Browse...", Location = new Point(404, 84), Size = new Size(85, 27), Anchor = AnchorStyles.Top | AnchorStyles.Right, Font = new Font("Segoe UI", 8.5F) };
         btnBrowseModelsDir.Click += (s, e) =>
         {
             using var fbd = new FolderBrowserDialog { SelectedPath = txtModelsDir.Text };
@@ -165,19 +285,21 @@ public partial class SettingsForm : Form
             Dock = DockStyle.Top,
             Height = 160,
             Padding = new Padding(12),
-            Margin = new Padding(0, 10, 0, 0)
+            Margin = new Padding(0, 10, 0, 0),
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(33, 37, 41)
         };
 
-        var lblChunk = new Label { Text = "Chunk Duration (sec):", Location = new Point(14, 26), AutoSize = true };
-        numChunkDuration = new NumericUpDown { Location = new Point(145, 24), Size = new Size(70, 24), Minimum = 5, Maximum = 60, Value = 15 };
+        var lblChunk = new Label { Text = "Chunk Duration (sec):", Location = new Point(14, 26), AutoSize = true, Font = new Font("Segoe UI", 8.5F) };
+        numChunkDuration = new NumericUpDown { Location = new Point(145, 24), Size = new Size(70, 24), Minimum = 5, Maximum = 60, Value = 15, Font = new Font("Segoe UI", 8.5F) };
 
-        var lblOverlap = new Label { Text = "Overlap (sec):", Location = new Point(240, 26), AutoSize = true };
-        numOverlapDuration = new NumericUpDown { Location = new Point(330, 24), Size = new Size(60, 24), Minimum = 0, Maximum = 10, Value = 2 };
+        var lblOverlap = new Label { Text = "Overlap (sec):", Location = new Point(240, 26), AutoSize = true, Font = new Font("Segoe UI", 8.5F) };
+        numOverlapDuration = new NumericUpDown { Location = new Point(330, 24), Size = new Size(60, 24), Minimum = 0, Maximum = 10, Value = 2, Font = new Font("Segoe UI", 8.5F) };
 
-        chkAutosave = new CheckBox { Text = "Auto-save transcript every (sec):", Location = new Point(14, 60), AutoSize = true, Checked = true };
-        numAutosaveInterval = new NumericUpDown { Location = new Point(230, 58), Size = new Size(60, 24), Minimum = 10, Maximum = 300, Value = 30 };
+        chkAutosave = new CheckBox { Text = "Auto-save transcript every (sec):", Location = new Point(14, 60), AutoSize = true, Checked = true, Font = new Font("Segoe UI", 8.5F) };
+        numAutosaveInterval = new NumericUpDown { Location = new Point(230, 58), Size = new Size(60, 24), Minimum = 10, Maximum = 300, Value = 30, Font = new Font("Segoe UI", 8.5F) };
 
-        chkKeepAudio = new CheckBox { Text = "Keep recorded temporary audio after transcription", Location = new Point(14, 94), AutoSize = true, Checked = false };
+        chkKeepAudio = new CheckBox { Text = "Keep recorded temporary audio after transcription", Location = new Point(14, 94), AutoSize = true, Checked = false, Font = new Font("Segoe UI", 8.5F) };
 
         grpStreaming.Controls.Add(lblChunk);
         grpStreaming.Controls.Add(numChunkDuration);
@@ -192,6 +314,80 @@ public partial class SettingsForm : Form
 
         tabControlSettings.TabPages.Add(tabVideo);
         tabControlSettings.TabPages.Add(tabTranscription);
+
+        RefreshFFmpegStatus();
+    }
+
+    private void UpdateCustomFFmpegUiState()
+    {
+        bool useCustom = chkUseCustomFFmpeg.Checked;
+        txtFFmpegPath.Enabled = useCustom;
+        btnBrowseFFmpeg.Enabled = useCustom;
+        txtFFprobePath.Enabled = useCustom;
+        btnBrowseFFprobe.Enabled = useCustom;
+    }
+
+    private async void RefreshFFmpegStatus()
+    {
+        bool managedInstalled = FFmpegManager.IsManagedInstalled();
+        if (managedInstalled)
+        {
+            string path = FFmpegManager.GetManagedFFmpegPath();
+            string? ver = await FFmpegManager.GetVersionAsync(path);
+            lblManagedStatus.Text = $"Status: ● Installed {(ver != null ? $"({ver})" : "")}";
+            lblManagedStatus.ForeColor = Color.FromArgb(21, 87, 36);
+            btnInstallManagedFFmpeg.Text = "🔄 Reinstall FFmpeg";
+        }
+        else
+        {
+            lblManagedStatus.Text = "Status: ○ Not Installed (AutoSnap-managed)";
+            lblManagedStatus.ForeColor = Color.FromArgb(114, 28, 36);
+            btnInstallManagedFFmpeg.Text = "📥 Install FFmpeg";
+        }
+    }
+
+    private async void BtnInstallManagedFFmpeg_Click(object? sender, EventArgs e)
+    {
+        btnInstallManagedFFmpeg.Enabled = false;
+        btnTestFFmpeg.Enabled = false;
+        progressFFmpeg.Visible = true;
+        lblFFmpegProgress.Visible = true;
+        progressFFmpeg.Value = 0;
+
+        var progress = new Progress<(long Bytes, long Total, double Percent, double SpeedMb, string Stage)>(p =>
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    progressFFmpeg.Value = Math.Clamp((int)p.Percent, 0, 100);
+                    lblFFmpegProgress.Text = $"{p.Stage} ({p.Percent:0.0}%)";
+                }));
+            }
+            else
+            {
+                progressFFmpeg.Value = Math.Clamp((int)p.Percent, 0, 100);
+                lblFFmpegProgress.Text = $"{p.Stage} ({p.Percent:0.0}%)";
+            }
+        });
+
+        try
+        {
+            await FFmpegManager.InstallManagedFFmpegAsync(progress);
+            MessageBox.Show(this, "FFmpeg and FFprobe successfully installed and verified!", "Installation Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Failed to install FFmpeg: {ex.Message}", "Installation Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            btnInstallManagedFFmpeg.Enabled = true;
+            btnTestFFmpeg.Enabled = true;
+            progressFFmpeg.Visible = false;
+            lblFFmpegProgress.Visible = false;
+            RefreshFFmpegStatus();
+        }
     }
 
     private void LoadSettingsToUi()
@@ -234,8 +430,10 @@ public partial class SettingsForm : Form
         txtChromeExe.Text = _settings.Chrome.CustomChromeExecutablePath ?? string.Empty;
 
         // Video Settings
+        chkUseCustomFFmpeg.Checked = _settings.Video.UseCustomFFmpeg;
         txtFFmpegPath.Text = _settings.Video.CustomFFmpegPath ?? string.Empty;
         txtFFprobePath.Text = _settings.Video.CustomFFprobePath ?? string.Empty;
+        UpdateCustomFFmpegUiState();
 
         // Transcription Settings
         cmbDefaultLanguage.SelectedIndex = (int)_settings.Transcription.DefaultLanguageMode;
@@ -256,20 +454,21 @@ public partial class SettingsForm : Form
 
     private void BtnTestFFmpeg_Click(object? sender, EventArgs e)
     {
-        string? ffmpeg = FFmpegService.FindExecutable(txtFFmpegPath.Text.Trim());
-        string? ffprobe = FFprobeService.FindExecutable(txtFFprobePath.Text.Trim());
+        bool useCustom = chkUseCustomFFmpeg.Checked;
+        string? ffmpeg = FFmpegManager.FindFFmpeg(txtFFmpegPath.Text.Trim(), useCustom);
+        string? ffprobe = FFmpegManager.FindFFprobe(txtFFprobePath.Text.Trim(), useCustom);
 
         if (ffmpeg != null && ffprobe != null)
         {
-            lblFFmpegStatus.Text = "Status: ✓ FFmpeg and FFprobe found!";
-            lblFFmpegStatus.ForeColor = Color.FromArgb(21, 87, 36);
+            lblManagedStatus.Text = "Status: ✓ FFmpeg and FFprobe active and ready!";
+            lblManagedStatus.ForeColor = Color.FromArgb(21, 87, 36);
             MessageBox.Show(this, $"FFmpeg found at:\n{ffmpeg}\n\nFFprobe found at:\n{ffprobe}", "FFmpeg Detected", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         else
         {
-            lblFFmpegStatus.Text = $"Status: ⚠ {(ffmpeg == null ? "FFmpeg missing" : "FFprobe missing")}";
-            lblFFmpegStatus.ForeColor = Color.FromArgb(114, 28, 36);
-            MessageBox.Show(this, "Could not locate FFmpeg or FFprobe.\nPlease install FFmpeg or specify the exact executable paths above.", "FFmpeg Missing", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            lblManagedStatus.Text = $"Status: ⚠ {(ffmpeg == null ? "FFmpeg missing" : "FFprobe missing")}";
+            lblManagedStatus.ForeColor = Color.FromArgb(114, 28, 36);
+            MessageBox.Show(this, "Could not locate FFmpeg or FFprobe.\nClick [Install FFmpeg] to auto-install managed binaries, or specify custom paths.", "FFmpeg Missing", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -371,6 +570,7 @@ public partial class SettingsForm : Form
         _settings.Chrome.CustomChromeExecutablePath = string.IsNullOrWhiteSpace(chromeExe) ? null : chromeExe;
 
         // Video settings
+        _settings.Video.UseCustomFFmpeg = chkUseCustomFFmpeg.Checked;
         string ffmpegPath = txtFFmpegPath.Text.Trim();
         string ffprobePath = txtFFprobePath.Text.Trim();
         _settings.Video.CustomFFmpegPath = string.IsNullOrWhiteSpace(ffmpegPath) ? null : ffmpegPath;

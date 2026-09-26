@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -8,9 +9,13 @@ namespace AutoSnap.BrowserCapture;
 
 public class BrowserCaptureSession : IDisposable
 {
+    private static long _globalSessionIdCounter;
+    public long SessionId { get; } = Interlocked.Increment(ref _globalSessionIdCounter);
+
     private readonly WebSocket _webSocket;
-    private readonly CancellationTokenSource _cts = new();
+    private CancellationTokenSource? _cts;
     private Task? _receiveTask;
+    private readonly SemaphoreSlim _stopLock = new(1, 1);
     private readonly ConcurrentDictionary<int, TaskCompletionSource<byte[]>> _pendingFrameRequests = new();
     private int _requestIdCounter;
     private bool _disposed;
@@ -35,7 +40,12 @@ public class BrowserCaptureSession : IDisposable
 
     public void Start()
     {
-        _receiveTask = Task.Run(() => ReceiveLoopAsync(_cts.Token));
+        if (_disposed) return;
+
+        var cts = new CancellationTokenSource();
+        _cts = cts;
+        Debug.WriteLine($"[BrowserCaptureSession {SessionId}] Started");
+        _receiveTask = Task.Run(() => ReceiveLoopAsync(cts.Token), cts.Token);
     }
 
     public async Task<byte[]> RequestFrameAsync(
@@ -242,20 +252,82 @@ public class BrowserCaptureSession : IDisposable
         Disconnected?.Invoke(this, EventArgs.Empty);
     }
 
-    public void Dispose()
+    public async Task StopAsync()
     {
-        if (!_disposed)
+        await _stopLock.WaitAsync();
+        try
         {
+            if (_disposed) return;
             _disposed = true;
-            _cts.Cancel();
-            _cts.Dispose();
-            _webSocket.Dispose();
+
+            Debug.WriteLine($"[BrowserCaptureSession {SessionId}] StopAsync requested");
+
+            var cts = Interlocked.Exchange(ref _cts, null);
+            var task = Interlocked.Exchange(ref _receiveTask, null);
+
+            if (cts != null)
+            {
+                try
+                {
+                    cts.Cancel();
+                    Debug.WriteLine($"[BrowserCaptureSession {SessionId}] Cancellation requested");
+
+                    // Close WebSocket to unblock any pending ReceiveAsync immediately
+                    if (_webSocket.State == WebSocketState.Open || _webSocket.State == WebSocketState.CloseReceived)
+                    {
+                        try
+                        {
+                            using var closeCts = new CancellationTokenSource(1000);
+                            await _webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Session closed", closeCts.Token);
+                        }
+                        catch { }
+                    }
+
+                    if (task != null)
+                    {
+                        try
+                        {
+                            await task.ConfigureAwait(false);
+                            Debug.WriteLine($"[BrowserCaptureSession {SessionId}] Receive worker completed");
+                        }
+                        catch (OperationCanceledException) { }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[BrowserCaptureSession {SessionId}] Receive worker exception: {ex.Message}");
+                        }
+                    }
+                }
+                finally
+                {
+                    cts.Dispose();
+                    Debug.WriteLine($"[BrowserCaptureSession {SessionId}] CTS disposed");
+                }
+            }
+
+            try
+            {
+                _webSocket.Dispose();
+            }
+            catch { }
 
             foreach (var kvp in _pendingFrameRequests)
             {
                 kvp.Value.TrySetCanceled();
             }
             _pendingFrameRequests.Clear();
+        }
+        finally
+        {
+            _stopLock.Release();
+        }
+    }
+
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            StopAsync().GetAwaiter().GetResult();
+            _stopLock.Dispose();
         }
     }
 }

@@ -7,74 +7,27 @@ namespace AutoSnap.Video;
 public class FFprobeService
 {
     private readonly string? _customPath;
+    private readonly bool _useCustomPath;
 
-    public FFprobeService(string? customPath = null)
+    public FFprobeService(string? customPath = null, bool useCustomPath = false)
     {
         _customPath = customPath;
+        _useCustomPath = useCustomPath;
     }
 
-    public static string? FindExecutable(string? customPath = null)
+    public static string? FindExecutable(string? customPath = null, bool useCustom = false)
     {
-        if (!string.IsNullOrWhiteSpace(customPath) && File.Exists(customPath))
-            return customPath;
-
-        // Check app directory
-        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-        string localProbe = Path.Combine(baseDir, "ffprobe.exe");
-        if (File.Exists(localProbe)) return localProbe;
-
-        localProbe = Path.Combine(baseDir, "ffmpeg", "ffprobe.exe");
-        if (File.Exists(localProbe)) return localProbe;
-
-        localProbe = Path.Combine(baseDir, "ffmpeg", "bin", "ffprobe.exe");
-        if (File.Exists(localProbe)) return localProbe;
-
-        // Check LocalAppData
-        string localAppData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AutoSnap", "ffmpeg", "bin", "ffprobe.exe");
-        if (File.Exists(localAppData)) return localAppData;
-
-        // Check PATH
-        string? pathEnv = Environment.GetEnvironmentVariable("PATH");
-        if (!string.IsNullOrEmpty(pathEnv))
-        {
-            foreach (var path in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-            {
-                try
-                {
-                    string candidate = Path.Combine(path.Trim(), "ffprobe.exe");
-                    if (File.Exists(candidate)) return candidate;
-                }
-                catch
-                {
-                    // Ignore invalid path characters
-                }
-            }
-        }
-
-        // Check common chocolatey/scoop/winget default paths
-        string[] commonPaths =
-        {
-            @"C:\ffmpeg\bin\ffprobe.exe",
-            @"C:\ProgramData\chocolatey\bin\ffprobe.exe",
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "scoop", "shims", "ffprobe.exe")
-        };
-
-        foreach (var path in commonPaths)
-        {
-            if (File.Exists(path)) return path;
-        }
-
-        return null;
+        return FFmpegManager.FindFFprobe(customPath, useCustom);
     }
 
-    public bool IsAvailable => FindExecutable(_customPath) != null;
+    public bool IsAvailable => FindExecutable(_customPath, _useCustomPath) != null;
 
     public async Task<VideoInfo> GetVideoInfoAsync(string videoPath, CancellationToken cancellationToken = default)
     {
         if (!File.Exists(videoPath))
             throw new FileNotFoundException("Video file not found.", videoPath);
 
-        string? ffprobeExe = FindExecutable(_customPath);
+        string? ffprobeExe = FindExecutable(_customPath, _useCustomPath);
         if (string.IsNullOrEmpty(ffprobeExe))
         {
             throw new InvalidOperationException("ffprobe.exe was not found. Please install FFmpeg/FFprobe or configure its path in Settings.");
@@ -90,7 +43,7 @@ public class FFprobeService
         var startInfo = new ProcessStartInfo
         {
             FileName = ffprobeExe,
-            Arguments = $"-v error -show_entries format=duration,size:stream=index,codec_name,codec_type,width,height,r_frame_rate -of json \"{videoPath}\"",
+            Arguments = $"-v quiet -print_format json -show_format -show_streams \"{videoPath}\"",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -100,79 +53,87 @@ public class FFprobeService
         using var process = new Process { StartInfo = startInfo };
         process.Start();
 
-        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
+        string jsonOutput = await process.StandardOutput.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
 
-        string output = await outputTask;
-        string error = await errorTask;
-
-        if (process.ExitCode != 0)
+        if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(jsonOutput))
         {
-            throw new InvalidOperationException($"FFprobe failed with exit code {process.ExitCode}: {error}");
+            throw new InvalidOperationException($"ffprobe failed with exit code {process.ExitCode}.");
         }
 
-        try
+        ParseFfprobeJson(jsonOutput, videoInfo);
+        return videoInfo;
+    }
+
+    private static void ParseFfprobeJson(string json, VideoInfo videoInfo)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        // Parse format
+        if (root.TryGetProperty("format", out var formatProp))
         {
-            using var doc = JsonDocument.Parse(output);
-            var root = doc.RootElement;
+            if (formatProp.TryGetProperty("format_name", out var fn))
+                videoInfo.Format = fn.GetString() ?? "Unknown";
 
-            if (root.TryGetProperty("format", out var formatProp))
+            if (formatProp.TryGetProperty("duration", out var dur) &&
+                double.TryParse(dur.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double durationSec))
             {
-                if (formatProp.TryGetProperty("duration", out var durationProp))
-                {
-                    if (double.TryParse(durationProp.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out double durationSeconds))
-                    {
-                        videoInfo.Duration = TimeSpan.FromSeconds(durationSeconds);
-                    }
-                }
+                videoInfo.Duration = TimeSpan.FromSeconds(durationSec);
             }
+        }
 
-            if (root.TryGetProperty("streams", out var streamsProp) && streamsProp.ValueKind == JsonValueKind.Array)
+        // Parse streams
+        if (root.TryGetProperty("streams", out var streamsProp) && streamsProp.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var stream in streamsProp.EnumerateArray())
             {
-                foreach (var stream in streamsProp.EnumerateArray())
+                string codecType = stream.TryGetProperty("codec_type", out var ct) ? ct.GetString() ?? "" : "";
+
+                if (codecType == "video" && videoInfo.Width == 0 && videoInfo.Height == 0)
                 {
-                    string codecType = stream.TryGetProperty("codec_type", out var typeProp) ? typeProp.GetString() ?? "" : "";
-                    string codecName = stream.TryGetProperty("codec_name", out var codecProp) ? codecProp.GetString() ?? "" : "";
-
-                    if (codecType.Equals("video", StringComparison.OrdinalIgnoreCase))
+                    int width = stream.TryGetProperty("width", out var w) ? w.GetInt32() : 0;
+                    int height = stream.TryGetProperty("height", out var h) ? h.GetInt32() : 0;
+                    if (width > 0 && height > 0)
                     {
-                        videoInfo.Codec = codecName;
-                        if (stream.TryGetProperty("width", out var widthProp))
-                            videoInfo.Width = widthProp.GetInt32();
-                        if (stream.TryGetProperty("height", out var heightProp))
-                            videoInfo.Height = heightProp.GetInt32();
+                        videoInfo.Width = width;
+                        videoInfo.Height = height;
+                    }
 
-                        if (stream.TryGetProperty("r_frame_rate", out var rFrameRateProp))
+                    if (stream.TryGetProperty("codec_name", out var cn))
+                    {
+                        videoInfo.Codec = cn.GetString() ?? "Unknown";
+                    }
+
+                    if (stream.TryGetProperty("r_frame_rate", out var rfr))
+                    {
+                        string rfrStr = rfr.GetString() ?? "";
+                        var parts = rfrStr.Split('/');
+                        if (parts.Length == 2 &&
+                            double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double num) &&
+                            double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double den) &&
+                            den > 0)
                         {
-                            string? rateStr = rFrameRateProp.GetString();
-                            if (!string.IsNullOrEmpty(rateStr) && rateStr.Contains('/'))
-                            {
-                                var parts = rateStr.Split('/');
-                                if (parts.Length == 2 &&
-                                    double.TryParse(parts[0], NumberStyles.Any, CultureInfo.InvariantCulture, out double num) &&
-                                    double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out double den) &&
-                                    den > 0)
-                                {
-                                    videoInfo.FrameRate = num / den;
-                                }
-                            }
+                            videoInfo.FrameRate = num / den;
                         }
                     }
-                    else if (codecType.Equals("audio", StringComparison.OrdinalIgnoreCase))
+
+                    if (videoInfo.Duration == TimeSpan.Zero &&
+                        stream.TryGetProperty("duration", out var streamDur) &&
+                        double.TryParse(streamDur.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double sDurSec))
                     {
-                        videoInfo.HasAudio = true;
-                        videoInfo.AudioCodec = codecName;
+                        videoInfo.Duration = TimeSpan.FromSeconds(sDurSec);
+                    }
+                }
+                else if (codecType == "audio")
+                {
+                    videoInfo.HasAudio = true;
+                    if (stream.TryGetProperty("codec_name", out var acn))
+                    {
+                        videoInfo.AudioCodec = acn.GetString() ?? "Unknown";
                     }
                 }
             }
         }
-        catch (JsonException ex)
-        {
-            throw new InvalidOperationException($"Failed to parse FFprobe output: {ex.Message}", ex);
-        }
-
-        return videoInfo;
     }
 }

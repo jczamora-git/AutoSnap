@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using AutoSnap.Audio;
 using AutoSnap.BrowserCapture;
+using AutoSnap.Hardware;
 using AutoSnap.Models;
 using AutoSnap.Transcription;
 using AutoSnap.Video;
@@ -16,11 +17,17 @@ public class TranscriptionControl : UserControl
     private readonly FFmpegService _ffmpegService;
     private readonly BrowserCaptureServer _browserCaptureServer;
     private readonly AppSettings _appSettings;
+    private readonly SystemHardwareInfo _hardwareInfo;
 
     private TranscriptionSession? _activeSession;
     private CancellationTokenSource? _sessionCts;
 
     // Controls
+    private Panel _pnlBetaBanner = null!;
+    private Panel _pnlFirstRunBanner = null!;
+    private Label _lblFirstRunText = null!;
+    private Button _btnDownloadFirstRunModel = null!;
+
     private ComboBox _cmbSourceType = null!;
     private ComboBox _cmbAudioDevice = null!;
     private Button _btnSelectFile = null!;
@@ -35,6 +42,8 @@ public class TranscriptionControl : UserControl
     private Button _btnStartStop = null!;
     private Label _lblStatusBadge = null!;
     private Label _lblMetrics = null!;
+    private Label _lblPerformanceWarning = null!;
+    private Button _btnSwitchModel = null!;
 
     private TextBox _txtTranscript = null!;
     private Button _btnExportTxt = null!;
@@ -59,9 +68,11 @@ public class TranscriptionControl : UserControl
         _ffmpegService = ffmpegService;
         _browserCaptureServer = browserCaptureServer;
         _appSettings = appSettings;
+        _hardwareInfo = SystemHardwareService.GetSystemHardwareInfo();
 
         InitializeUi();
         PopulateAudioDevices();
+        CheckFirstRunStatus();
     }
 
     private void InitializeUi()
@@ -69,19 +80,95 @@ public class TranscriptionControl : UserControl
         Dock = DockStyle.Fill;
         BackColor = Color.FromArgb(248, 249, 250);
         AutoScroll = true;
-        Padding = new Padding(20);
+        Padding = new Padding(16);
 
+        // 1. Experimental Beta Banner (Non-blocking compact top banner)
+        _pnlBetaBanner = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 60,
+            BackColor = Color.FromArgb(255, 248, 225),
+            BorderStyle = BorderStyle.FixedSingle,
+            Padding = new Padding(12, 8, 12, 8),
+            Margin = new Padding(0, 0, 0, 10)
+        };
+
+        var lblBetaTitle = new Label
+        {
+            Text = "⚠ Experimental Feature — Transcription Beta",
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(133, 100, 4),
+            Location = new Point(12, 6),
+            AutoSize = true
+        };
+
+        var lblBetaDesc = new Label
+        {
+            Text = "Local transcription is currently in beta. Accuracy, performance, and live transcription latency may vary depending on your hardware, selected model, audio quality, and source.",
+            Font = new Font("Segoe UI", 8.25F),
+            ForeColor = Color.FromArgb(102, 77, 3),
+            Location = new Point(12, 28),
+            Size = new Size(720, 26)
+        };
+
+        _pnlBetaBanner.Controls.Add(lblBetaTitle);
+        _pnlBetaBanner.Controls.Add(lblBetaDesc);
+
+        // 2. First-Run Recommendation Banner (visible if no model installed)
+        _pnlFirstRunBanner = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 44,
+            BackColor = Color.FromArgb(227, 242, 253),
+            BorderStyle = BorderStyle.FixedSingle,
+            Padding = new Padding(12, 6, 12, 6),
+            Margin = new Padding(0, 8, 0, 8),
+            Visible = false
+        };
+
+        _lblFirstRunText = new Label
+        {
+            Text = "No transcription model installed. Recommended for your system: Small Multilingual",
+            Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(13, 71, 161),
+            Location = new Point(12, 12),
+            AutoSize = true
+        };
+
+        _btnDownloadFirstRunModel = new Button
+        {
+            Text = "📥 Download Model...",
+            Font = new Font("Segoe UI", 8F, FontStyle.Bold),
+            BackColor = Color.FromArgb(0, 120, 215),
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            Size = new Size(160, 26),
+            Location = new Point(560, 8)
+        };
+        _btnDownloadFirstRunModel.FlatAppearance.BorderSize = 0;
+        _btnDownloadFirstRunModel.Click += (s, e) =>
+        {
+            using var dlg = new WhisperModelManagerForm(_modelManager);
+            dlg.ShowDialog(this);
+            CheckFirstRunStatus();
+        };
+
+        _pnlFirstRunBanner.Controls.Add(_lblFirstRunText);
+        _pnlFirstRunBanner.Controls.Add(_btnDownloadFirstRunModel);
+
+        // Main Config Table
         var tblTop = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             AutoSize = true,
             ColumnCount = 2,
-            RowCount = 1
+            RowCount = 1,
+            Margin = new Padding(0, 8, 0, 8)
         };
         tblTop.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
         tblTop.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
 
-        // 1. Source Card
+        // 3. Audio Source Card
         var grpSource = new GroupBox
         {
             Text = "Transcription Audio Source",
@@ -186,7 +273,7 @@ public class TranscriptionControl : UserControl
         grpSource.Controls.Add(_btnBrowserHelper);
         grpSource.Controls.Add(_lblBrowserStatus);
 
-        // 2. Language & Model Card
+        // 4. Language & Model Card
         var grpConfig = new GroupBox
         {
             Text = "Transcription Configuration",
@@ -216,7 +303,7 @@ public class TranscriptionControl : UserControl
             Size = new Size(160, 24),
             Font = new Font("Segoe UI", 8.5F)
         };
-        _cmbModel.Items.AddRange(new object[] { "Small", "Base", "Tiny", "Medium" });
+        _cmbModel.Items.AddRange(new object[] { "Small", "Base", "Tiny", "Medium", "Large v3", "Large v3 Turbo", "Large v3 Turbo Q5" });
         _cmbModel.SelectedIndex = 0;
 
         _btnManageModels = new Button
@@ -233,6 +320,7 @@ public class TranscriptionControl : UserControl
         {
             using var dlg = new WhisperModelManagerForm(_modelManager);
             dlg.ShowDialog(this);
+            CheckFirstRunStatus();
         };
 
         grpConfig.Controls.Add(lblLang);
@@ -244,12 +332,12 @@ public class TranscriptionControl : UserControl
         tblTop.Controls.Add(grpSource, 0, 0);
         tblTop.Controls.Add(grpConfig, 1, 0);
 
-        // 3. Controls & Metrics Bar
+        // 5. Controls & Metrics Bar
         var pnlBar = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 50,
-            Padding = new Padding(0, 8, 0, 8)
+            Height = 65,
+            Padding = new Padding(0, 6, 0, 6)
         };
 
         _btnStartStop = new Button
@@ -260,7 +348,7 @@ public class TranscriptionControl : UserControl
             ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
             Size = new Size(180, 34),
-            Location = new Point(0, 8)
+            Location = new Point(0, 6)
         };
         _btnStartStop.FlatAppearance.BorderSize = 0;
         _btnStartStop.Click += BtnStartStop_Click;
@@ -270,24 +358,50 @@ public class TranscriptionControl : UserControl
             Text = "● Idle",
             Font = new Font("Segoe UI", 9F, FontStyle.Bold),
             ForeColor = Color.FromArgb(108, 117, 125),
-            Location = new Point(190, 16),
+            Location = new Point(190, 14),
             AutoSize = true
         };
 
         _lblMetrics = new Label
         {
-            Text = "Live: 00:00:00 | Processed: 00:00:00 | Delay: 0s",
+            Text = "Live: 00:00:00 | Processed: 00:00:00 | Delay: 0s | Speed: 1.0× real time",
             Font = new Font("Segoe UI", 8.5F),
             ForeColor = Color.FromArgb(73, 80, 87),
-            Location = new Point(270, 17),
+            Location = new Point(270, 15),
             AutoSize = true
         };
+
+        _lblPerformanceWarning = new Label
+        {
+            Text = "",
+            Font = new Font("Segoe UI", 8F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(220, 53, 69),
+            Location = new Point(190, 42),
+            AutoSize = true,
+            Visible = false
+        };
+
+        _btnSwitchModel = new Button
+        {
+            Text = "⚡ Switch to Small",
+            Font = new Font("Segoe UI", 8F, FontStyle.Bold),
+            BackColor = Color.FromArgb(0, 120, 215),
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            Size = new Size(130, 24),
+            Location = new Point(620, 38),
+            Visible = false
+        };
+        _btnSwitchModel.FlatAppearance.BorderSize = 0;
+        _btnSwitchModel.Click += async (s, e) => await SwitchToModelAsync("Small");
 
         pnlBar.Controls.Add(_btnStartStop);
         pnlBar.Controls.Add(_lblStatusBadge);
         pnlBar.Controls.Add(_lblMetrics);
+        pnlBar.Controls.Add(_lblPerformanceWarning);
+        pnlBar.Controls.Add(_btnSwitchModel);
 
-        // 4. Live Transcript Editor & Exporter
+        // 6. Live Transcript Editor & Exporter
         var grpTranscript = new GroupBox
         {
             Text = "Live Transcript (Editable)",
@@ -331,7 +445,10 @@ public class TranscriptionControl : UserControl
         _btnOpenFolder.FlatAppearance.BorderSize = 0;
         _btnOpenFolder.Click += (s, e) =>
         {
-            string dir = Path.Combine(_appSettings.Capture.OutputFolder, DateTime.Now.ToString("yyyy-MM-dd"), "Transcripts");
+            string dir = Path.Combine(
+                !string.IsNullOrWhiteSpace(_appSettings.Capture.OutputFolder) ? _appSettings.Capture.OutputFolder : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "AutoSnap"),
+                DateTime.Now.ToString("yyyy-MM-dd"),
+                "Transcripts");
             Directory.CreateDirectory(dir);
             Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
         };
@@ -347,6 +464,23 @@ public class TranscriptionControl : UserControl
         Controls.Add(grpTranscript);
         Controls.Add(pnlBar);
         Controls.Add(tblTop);
+        Controls.Add(_pnlFirstRunBanner);
+        Controls.Add(_pnlBetaBanner);
+    }
+
+    private void CheckFirstRunStatus()
+    {
+        var installed = _modelManager.GetInstalledModels();
+        if (installed.Count == 0)
+        {
+            string rec = SystemHardwareService.GetPrimaryRecommendedModelName(_hardwareInfo);
+            _lblFirstRunText.Text = $"No transcription model installed. Recommended for your system: {rec}";
+            _pnlFirstRunBanner.Visible = true;
+        }
+        else
+        {
+            _pnlFirstRunBanner.Visible = false;
+        }
     }
 
     private void PopulateAudioDevices()
@@ -389,137 +523,46 @@ public class TranscriptionControl : UserControl
         }
     }
 
-    private async void BtnStartStop_Click(object? sender, EventArgs e)
+
+
+    private void UpdateLatencyMetrics((TimeSpan LiveTime, TimeSpan ProcessedTime, TimeSpan BacklogTime, double RealTimeFactor, double SpeedMultiplier, LiveTranscriptionPerformanceState State) metrics)
     {
-        if (_activeSession != null)
+        string stateText = metrics.State switch
         {
-            await StopTranscriptionAsync();
+            LiveTranscriptionPerformanceState.Excellent => "Excellent",
+            LiveTranscriptionPerformanceState.RealTime => "Real-Time",
+            LiveTranscriptionPerformanceState.Borderline => "Borderline",
+            LiveTranscriptionPerformanceState.FallingBehind => "Falling Behind",
+            LiveTranscriptionPerformanceState.SeverelyBehind => "Severely Behind",
+            _ => "Normal"
+        };
+
+        _lblMetrics.Text = $"Live: {metrics.LiveTime:hh\\:mm\\:ss} | Processed: {metrics.ProcessedTime:hh\\:mm\\:ss} | Backlog: {metrics.BacklogTime:mm\\:ss} | Speed: {metrics.SpeedMultiplier:0.0}× ({stateText})";
+
+        if (metrics.State == LiveTranscriptionPerformanceState.SeverelyBehind || (metrics.RealTimeFactor > 1.2 && metrics.BacklogTime.TotalSeconds > 10))
+        {
+            _lblPerformanceWarning.Text = $"⚠ Transcription cannot keep up with live audio (Speed: {metrics.SpeedMultiplier:0.0}× realtime, Backlog: {metrics.BacklogTime.Minutes}m {metrics.BacklogTime.Seconds}s).";
+            _lblPerformanceWarning.ForeColor = Color.FromArgb(220, 53, 69);
+            _lblPerformanceWarning.Visible = true;
+
+            string selectedModel = _cmbModel.SelectedItem?.ToString() ?? "";
+            if (!selectedModel.Equals("Small", StringComparison.OrdinalIgnoreCase) && !selectedModel.Equals("Base", StringComparison.OrdinalIgnoreCase) && !selectedModel.Equals("Tiny", StringComparison.OrdinalIgnoreCase))
+            {
+                _btnSwitchModel.Visible = true;
+            }
+        }
+        else if (metrics.State == LiveTranscriptionPerformanceState.FallingBehind || metrics.RealTimeFactor > 1.05)
+        {
+            _lblPerformanceWarning.Text = "⚠ Transcription is falling behind live audio. Consider switching to Small or Base.";
+            _lblPerformanceWarning.ForeColor = Color.FromArgb(255, 140, 0);
+            _lblPerformanceWarning.Visible = true;
+            _btnSwitchModel.Visible = false;
         }
         else
         {
-            await StartTranscriptionAsync();
+            _lblPerformanceWarning.Visible = false;
+            _btnSwitchModel.Visible = false;
         }
-    }
-
-    private async Task StartTranscriptionAsync()
-    {
-        string modelName = _cmbModel.SelectedItem?.ToString() ?? "Small";
-        if (!_modelManager.IsModelInstalled(modelName))
-        {
-            var ask = MessageBox.Show(
-                this,
-                $"The selected Whisper model '{modelName}' is not installed.\nWould you like to open the Model Manager to download it?",
-                "Model Not Installed",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Information);
-
-            if (ask == DialogResult.Yes)
-            {
-                using var dlg = new WhisperModelManagerForm(_modelManager);
-                dlg.ShowDialog(this);
-                if (!_modelManager.IsModelInstalled(modelName)) return;
-            }
-            else return;
-        }
-
-        string modelPath = _modelManager.GetModelPath(modelName);
-        await _transcriptionService.LoadModelAsync(modelPath);
-
-        IAudioSource audioSource;
-        int srcType = _cmbSourceType.SelectedIndex;
-
-        if (srcType == 0)
-        {
-            // System Audio
-            audioSource = new SystemAudioSource();
-        }
-        else if (srcType == 1)
-        {
-            // Browser Tab Audio
-            if (!_browserCaptureServer.IsRunning)
-            {
-                _browserCaptureServer.Start();
-            }
-
-            var browserSrc = new BrowserAudioSource();
-            _activeBrowserAudioSource = browserSrc;
-            _browserCaptureServer.AudioDataReceived += (s, data) => browserSrc.PushPcmData(data, 0, data.Length);
-
-            if (!_browserCaptureServer.HasActiveStream)
-            {
-                _browserCaptureServer.OpenCapturePageInBrowser(_appSettings.Chrome.CustomChromeExecutablePath);
-            }
-
-            audioSource = browserSrc;
-        }
-        else
-        {
-            // Local File
-            if (string.IsNullOrEmpty(_localMediaFilePath) || !File.Exists(_localMediaFilePath))
-            {
-                MessageBox.Show(this, "Please select an audio or video file first.", "No File Selected", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-            audioSource = new MediaFileAudioSource(_localMediaFilePath, _ffmpegService);
-        }
-
-        string outputDir = Path.Combine(
-            !string.IsNullOrWhiteSpace(_appSettings.Capture.OutputFolder) ? _appSettings.Capture.OutputFolder : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "AutoSnap"),
-            DateTime.Now.ToString("yyyy-MM-dd"),
-            "Transcripts");
-
-        _sessionCts = new CancellationTokenSource();
-        _activeSession = new TranscriptionSession(
-            audioSource,
-            _transcriptionService,
-            _recoveryService,
-            modelName,
-            (TranscriptionLanguageMode)_cmbLanguage.SelectedIndex,
-            outputDir);
-
-        _activeSession.StateChanged += (s, state) =>
-        {
-            if (InvokeRequired) BeginInvoke(new Action(() => UpdateStateBadge(state)));
-            else UpdateStateBadge(state);
-        };
-
-        _activeSession.LatencyUpdated += (s, metrics) =>
-        {
-            if (InvokeRequired)
-            {
-                BeginInvoke(new Action(() =>
-                {
-                    _lblMetrics.Text = $"Live: {metrics.LiveTime:hh\\:mm\\:ss} | Processed: {metrics.ProcessedTime:hh\\:mm\\:ss} | Delay: {metrics.DelaySeconds:0}s";
-                }));
-            }
-            else
-            {
-                _lblMetrics.Text = $"Live: {metrics.LiveTime:hh\\:mm\\:ss} | Processed: {metrics.ProcessedTime:hh\\:mm\\:ss} | Delay: {metrics.DelaySeconds:0}s";
-            }
-        };
-
-        _activeSession.SegmentProduced += (s, seg) =>
-        {
-            if (InvokeRequired)
-            {
-                BeginInvoke(new Action(() =>
-                {
-                    _txtTranscript.AppendText($"[{seg.Start:hh\\:mm\\:ss}]\r\n{seg.Text}\r\n\r\n");
-                }));
-            }
-            else
-            {
-                _txtTranscript.AppendText($"[{seg.Start:hh\\:mm\\:ss}]\r\n{seg.Text}\r\n\r\n");
-            }
-        };
-
-        _btnStartStop.Text = "⏹ Stop Transcription";
-        _btnStartStop.BackColor = Color.FromArgb(220, 53, 69);
-        _cmbSourceType.Enabled = false;
-        _cmbLanguage.Enabled = false;
-        _cmbModel.Enabled = false;
-
-        await _activeSession.StartAsync(_sessionCts.Token);
     }
 
     private void UpdateStateBadge(TranscriptionState state)
@@ -553,30 +596,426 @@ public class TranscriptionControl : UserControl
         }
     }
 
+    private async void BtnStartStop_Click(object? sender, EventArgs e)
+    {
+        if (_activeSession != null)
+        {
+            await StopTranscriptionAsync();
+        }
+        else
+        {
+            await StartTranscriptionAsync();
+        }
+    }
+
+    private async Task StartTranscriptionAsync()
+    {
+        string modelName = _cmbModel.SelectedItem?.ToString() ?? "Small";
+        int srcType = _cmbSourceType.SelectedIndex;
+
+        // Pre-flight Live Model Suitability Check
+        if (srcType != 2 && !SystemHardwareService.IsModelSuitableForLive(modelName, _hardwareInfo))
+        {
+            string recLiveModel = SystemHardwareService.GetPrimaryLiveRecommendedModelName(_hardwareInfo);
+            var warnDlg = MessageBox.Show(
+                this,
+                $"'{modelName}' may not run in real time on your current CPU configuration ({_hardwareInfo.LogicalCoreCount} logical cores).\n\n" +
+                $"Recommended live model for this system: {recLiveModel}\n\n" +
+                $"You can still use '{modelName}', but live transcription may fall significantly behind the live audio source.\n\n" +
+                $"Would you like to switch to '{recLiveModel}' for this live session?",
+                "Live Model Notice",
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Warning);
+
+            if (warnDlg == DialogResult.Cancel)
+            {
+                return;
+            }
+            else if (warnDlg == DialogResult.Yes)
+            {
+                modelName = recLiveModel;
+                _cmbModel.SelectedItem = recLiveModel;
+            }
+        }
+
+        if (!_modelManager.IsModelInstalled(modelName))
+        {
+            var ask = MessageBox.Show(
+                this,
+                $"The selected Whisper model '{modelName}' is not installed.\nWould you like to open the Model Manager to download it?",
+                "Model Not Installed",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Information);
+
+            if (ask == DialogResult.Yes)
+            {
+                using var dlg = new WhisperModelManagerForm(_modelManager);
+                dlg.ShowDialog(this);
+                CheckFirstRunStatus();
+                if (!_modelManager.IsModelInstalled(modelName)) return;
+            }
+            else return;
+        }
+
+        string modelPath = _modelManager.GetModelPath(modelName);
+        await _transcriptionService.LoadModelAsync(modelPath);
+
+        IAudioSource audioSource;
+
+        if (srcType == 0)
+        {
+            // System Audio
+            audioSource = new SystemAudioSource();
+        }
+        else if (srcType == 1)
+        {
+            // Browser Tab Audio
+            if (!_browserCaptureServer.IsRunning)
+            {
+                _browserCaptureServer.Start();
+            }
+
+            var browserSrc = new BrowserAudioSource();
+            _activeBrowserAudioSource = browserSrc;
+            _browserCaptureServer.AudioDataReceived += (s, data) => browserSrc.PushPcmData(data, 0, data.Length);
+
+            if (!_browserCaptureServer.HasActiveStream)
+            {
+                _browserCaptureServer.OpenCapturePageInBrowser(_appSettings.Chrome.CustomChromeExecutablePath);
+            }
+
+            audioSource = browserSrc;
+        }
+        else
+        {
+            // Local File
+            if (string.IsNullOrEmpty(_localMediaFilePath) || !File.Exists(_localMediaFilePath))
+            {
+                MessageBox.Show(this, "Please select an audio or video file first.", "No File Selected", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!FFmpegManager.IsManagedInstalled() && !_ffmpegService.IsAvailable)
+            {
+                var askFfmpeg = MessageBox.Show(
+                    this,
+                    "FFmpeg is required to process audio and video files. Would you like to install FFmpeg now?",
+                    "FFmpeg Required",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Information);
+
+                if (askFfmpeg == DialogResult.Yes)
+                {
+                    using var sf = new SettingsForm(_appSettings);
+                    sf.ShowDialog(this);
+                }
+                return;
+            }
+
+            audioSource = new MediaFileAudioSource(_localMediaFilePath, _ffmpegService);
+        }
+
+        string outputDir = Path.Combine(
+            !string.IsNullOrWhiteSpace(_appSettings.Capture.OutputFolder) ? _appSettings.Capture.OutputFolder : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "AutoSnap"),
+            DateTime.Now.ToString("yyyy-MM-dd"),
+            "Transcripts");
+
+        _sessionCts = new CancellationTokenSource();
+        _activeSession = new TranscriptionSession(
+            audioSource,
+            _transcriptionService,
+            _recoveryService,
+            modelName,
+            (TranscriptionLanguageMode)_cmbLanguage.SelectedIndex,
+            outputDir);
+
+        _activeSession.StateChanged += (s, state) =>
+        {
+            if (InvokeRequired) BeginInvoke(new Action(() => UpdateStateBadge(state)));
+            else UpdateStateBadge(state);
+        };
+
+        _activeSession.LatencyUpdated += (s, metrics) =>
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(() => UpdateLatencyMetrics(metrics)));
+            }
+            else
+            {
+                UpdateLatencyMetrics(metrics);
+            }
+        };
+
+        _activeSession.PerformanceProbeAlert += (s, speed) =>
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    _lblPerformanceWarning.Text = $"⚠ Performance Probe: Measured speed is {speed:0.0}× realtime. Live audio will accumulate delay. Recommended: Small or Base.";
+                    _lblPerformanceWarning.ForeColor = Color.FromArgb(220, 53, 69);
+                    _lblPerformanceWarning.Visible = true;
+                    _btnSwitchModel.Visible = true;
+                }));
+            }
+            else
+            {
+                _lblPerformanceWarning.Text = $"⚠ Performance Probe: Measured speed is {speed:0.0}× realtime. Live audio will accumulate delay. Recommended: Small or Base.";
+                _lblPerformanceWarning.ForeColor = Color.FromArgb(220, 53, 69);
+                _lblPerformanceWarning.Visible = true;
+                _btnSwitchModel.Visible = true;
+            }
+        };
+
+        _activeSession.BacklogCeilingReached += (s, msg) =>
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    _lblPerformanceWarning.Text = $"⚠ {msg}";
+                    _lblPerformanceWarning.Visible = true;
+                }));
+            }
+        };
+
+        _activeSession.SegmentProduced += (s, seg) =>
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    _txtTranscript.AppendText($"[{seg.Start:hh\\:mm\\:ss}]\r\n{seg.Text}\r\n\r\n");
+                }));
+            }
+            else
+            {
+                _txtTranscript.AppendText($"[{seg.Start:hh\\:mm\\:ss}]\r\n{seg.Text}\r\n\r\n");
+            }
+        };
+
+        _btnStartStop.Text = "⏹ Stop Transcription";
+        _btnStartStop.BackColor = Color.FromArgb(220, 53, 69);
+        _cmbSourceType.Enabled = false;
+        _cmbLanguage.Enabled = false;
+        _cmbModel.Enabled = false;
+
+        await _activeSession.StartAsync(_sessionCts.Token);
+    }
+
+    private readonly SemaphoreSlim _transcriptionLock = new(1, 1);
+
     private async Task StopTranscriptionAsync()
     {
-        if (_activeSession == null) return;
-
-        _btnStartStop.Enabled = false;
+        await _transcriptionLock.WaitAsync();
         try
         {
-            await _activeSession.StopAsync();
-            UpdateStateBadge(TranscriptionState.Completed);
+            if (_activeSession == null) return;
+
+            TimeSpan backlog = _activeSession.BacklogTime;
+            double speed = _activeSession.SpeedMultiplier;
+
+            if (backlog > TimeSpan.FromSeconds(30))
+            {
+                // Show Backlog Decision Dialog
+                double estSec = speed > 0 ? backlog.TotalSeconds / speed : backlog.TotalSeconds * 5;
+                TimeSpan estRemaining = TimeSpan.FromSeconds(estSec);
+                string estText = estRemaining.TotalMinutes >= 1 ? $"~{estRemaining.Minutes} mins {estRemaining.Seconds} secs" : $"~{estRemaining.Seconds} secs";
+
+                using var decisionForm = new Form
+                {
+                    Text = "Stop Transcription — Backlog Notice",
+                    Size = new Size(520, 240),
+                    StartPosition = FormStartPosition.CenterParent,
+                    FormBorderStyle = FormBorderStyle.FixedDialog,
+                    MaximizeBox = false,
+                    MinimizeBox = false,
+                    Font = new Font("Segoe UI", 9F)
+                };
+
+                var lblHeader = new Label
+                {
+                    Text = $"There are {backlog.Minutes}m {backlog.Seconds}s of unprocessed queued audio.",
+                    Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                    ForeColor = Color.FromArgb(133, 100, 4),
+                    Location = new Point(20, 16),
+                    AutoSize = true
+                };
+
+                var lblBody = new Label
+                {
+                    Text = $"At measured speed ({speed:0.0}× real-time), transcribing the remaining backlog will take approximately {estText}.\n\nWhat would you like AutoSnap to do?",
+                    Font = new Font("Segoe UI", 9F),
+                    Location = new Point(20, 48),
+                    Size = new Size(460, 55)
+                };
+
+                var btnStopNow = new Button
+                {
+                    Text = "⏹ Stop Now (Discard Queue & Save)",
+                    DialogResult = DialogResult.OK,
+                    Location = new Point(20, 125),
+                    Size = new Size(240, 32),
+                    BackColor = Color.FromArgb(220, 53, 69),
+                    ForeColor = Color.White,
+                    FlatStyle = FlatStyle.Flat,
+                    Font = new Font("Segoe UI", 9F, FontStyle.Bold)
+                };
+                btnStopNow.FlatAppearance.BorderSize = 0;
+
+                var btnFinish = new Button
+                {
+                    Text = "⏳ Finish Remaining Audio",
+                    DialogResult = DialogResult.Yes,
+                    Location = new Point(270, 125),
+                    Size = new Size(210, 32),
+                    BackColor = Color.FromArgb(0, 120, 215),
+                    ForeColor = Color.White,
+                    FlatStyle = FlatStyle.Flat,
+                    Font = new Font("Segoe UI", 9F, FontStyle.Bold)
+                };
+                btnFinish.FlatAppearance.BorderSize = 0;
+
+                var btnCancel = new Button
+                {
+                    Text = "Cancel",
+                    DialogResult = DialogResult.Cancel,
+                    Location = new Point(380, 165),
+                    Size = new Size(100, 28)
+                };
+
+                decisionForm.Controls.Add(lblHeader);
+                decisionForm.Controls.Add(lblBody);
+                decisionForm.Controls.Add(btnStopNow);
+                decisionForm.Controls.Add(btnFinish);
+                decisionForm.Controls.Add(btnCancel);
+                decisionForm.AcceptButton = btnStopNow;
+                decisionForm.CancelButton = btnCancel;
+
+                var result = decisionForm.ShowDialog(this);
+
+                if (result == DialogResult.Cancel)
+                {
+                    return; // Return to transcription
+                }
+
+                if (result == DialogResult.OK)
+                {
+                    // Stop Now
+                    _btnStartStop.Enabled = false;
+                    try
+                    {
+                        var cts = Interlocked.Exchange(ref _sessionCts, null);
+                        cts?.Cancel();
+                        await _activeSession.StopNowAsync();
+                        UpdateStateBadge(TranscriptionState.Completed);
+                        cts?.Dispose();
+                    }
+                    finally
+                    {
+                        _activeSession.Dispose();
+                        _activeSession = null;
+                        ResetControlsAfterStop();
+                    }
+                    return;
+                }
+
+                if (result == DialogResult.Yes)
+                {
+                    // Finish Remaining Audio with active progress reporting
+                    _btnStartStop.Enabled = false;
+                    try
+                    {
+                        var cts = Interlocked.Exchange(ref _sessionCts, null);
+                        var progress = new Progress<TranscriptionFlushProgress>(p =>
+                        {
+                            if (InvokeRequired)
+                            {
+                                BeginInvoke(new Action(() =>
+                                {
+                                    _lblMetrics.Text = $"Finalizing: {p.ProcessedAudio:hh\\:mm\\:ss} / {p.TotalAudio:hh\\:mm\\:ss} | Remaining: {p.RemainingAudio:mm\\:ss} | Speed: {p.SpeedMultiplier:0.0}× | ETA: {p.EstimatedRemainingTime:mm\\:ss}";
+                                }));
+                            }
+                            else
+                            {
+                                _lblMetrics.Text = $"Finalizing: {p.ProcessedAudio:hh\\:mm\\:ss} / {p.TotalAudio:hh\\:mm\\:ss} | Remaining: {p.RemainingAudio:mm\\:ss} | Speed: {p.SpeedMultiplier:0.0}× | ETA: {p.EstimatedRemainingTime:mm\\:ss}";
+                            }
+                        });
+
+                        await _activeSession.FinishRemainingAsync(progress);
+                        UpdateStateBadge(TranscriptionState.Completed);
+                        cts?.Dispose();
+                    }
+                    finally
+                    {
+                        _activeSession?.Dispose();
+                        _activeSession = null;
+                        ResetControlsAfterStop();
+                    }
+                    return;
+                }
+            }
+
+            // Normal Stop (backlog <= 30s)
+            _btnStartStop.Enabled = false;
+            try
+            {
+                var cts = Interlocked.Exchange(ref _sessionCts, null);
+                cts?.Cancel();
+
+                await _activeSession.StopAsync();
+                UpdateStateBadge(TranscriptionState.Completed);
+
+                cts?.Dispose();
+            }
+            finally
+            {
+                _activeSession.Dispose();
+                _activeSession = null;
+                ResetControlsAfterStop();
+            }
         }
         finally
         {
-            _activeSession.Dispose();
-            _activeSession = null;
-            _sessionCts?.Dispose();
-            _sessionCts = null;
-
-            _btnStartStop.Text = "🎙 Start Transcription";
-            _btnStartStop.BackColor = Color.FromArgb(40, 167, 69);
-            _btnStartStop.Enabled = true;
-            _cmbSourceType.Enabled = true;
-            _cmbLanguage.Enabled = true;
-            _cmbModel.Enabled = true;
+            _transcriptionLock.Release();
         }
+    }
+
+    private void ResetControlsAfterStop()
+    {
+        _btnStartStop.Text = "🎙 Start Transcription";
+        _btnStartStop.BackColor = Color.FromArgb(40, 167, 69);
+        _btnStartStop.Enabled = true;
+        _cmbSourceType.Enabled = true;
+        _cmbLanguage.Enabled = true;
+        _cmbModel.Enabled = true;
+        _lblPerformanceWarning.Visible = false;
+        _btnSwitchModel.Visible = false;
+    }
+
+    private async Task SwitchToModelAsync(string targetModel)
+    {
+        if (_activeSession != null)
+        {
+            await _transcriptionLock.WaitAsync();
+            try
+            {
+                var cts = Interlocked.Exchange(ref _sessionCts, null);
+                cts?.Cancel();
+                await _activeSession.StopNowAsync();
+                _activeSession.Dispose();
+                _activeSession = null;
+                cts?.Dispose();
+            }
+            finally
+            {
+                _transcriptionLock.Release();
+            }
+        }
+
+        _cmbModel.SelectedItem = targetModel;
+        await StartTranscriptionAsync();
     }
 
     private async Task ExportCurrentAsync(string format)
@@ -615,5 +1054,24 @@ public class TranscriptionControl : UserControl
             await File.WriteAllTextAsync(sfd.FileName, content, System.Text.Encoding.UTF8);
             MessageBox.Show(this, $"Transcript saved to:\n{sfd.FileName}", "Export Successful", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            var cts = Interlocked.Exchange(ref _sessionCts, null);
+            cts?.Cancel();
+            cts?.Dispose();
+
+            if (_activeSession != null)
+            {
+                _activeSession.Dispose();
+                _activeSession = null;
+            }
+
+            _transcriptionLock.Dispose();
+        }
+        base.Dispose(disposing);
     }
 }
